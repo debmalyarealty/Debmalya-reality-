@@ -1,4 +1,11 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { flushSync } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertCircle, Check, Heart } from 'lucide-react';
@@ -8,7 +15,7 @@ import {
   supabase,
 } from '../lib/supabaseClient';
 import {
-  addUserFavorite,
+  exchangeAuthCodeForSession,
   fetchSiteSettings,
   fetchUserFavoriteIds,
   getCachedSiteSettings,
@@ -16,7 +23,10 @@ import {
   isSiteSettingsCacheFresh,
   removeUserFavorite,
   signOutUser,
+  verifyEmailOtpTokenHash,
+  addUserFavorite,
 } from '../lib/supabaseData';
+import { parseSupabaseAuthCallbackUrl } from '../lib/authCallback';
 import { DEFAULT_SITE_SETTINGS } from '../lib/demoData';
 import { initGlobalTapFeedback, LUX_EASE } from '../lib/motion';
 import { markSignInPromptShown } from '../lib/prompts';
@@ -35,7 +45,20 @@ interface ThemeOrigin {
   y: number;
 }
 
-export type AuthModalMode = 'login' | 'register' | 'forgot' | 'recovery';
+export type AuthModalMode =
+  | 'login'
+  | 'register'
+  | 'forgot'
+  | 'recovery'
+  | 'verify-sent'
+  | 'expired-link';
+
+interface OpenAuthModalOptions {
+  notice?: string | null;
+  email?: string;
+  suppressRedirect?: boolean;
+  onSuccess?: () => void;
+}
 
 interface AppContextValue {
   theme: ThemeMode;
@@ -46,12 +69,17 @@ interface AppContextValue {
   favoriteIds: string[];
   authModalOpen: boolean;
   authModalMode: AuthModalMode;
+  authModalNotice: string | null;
+  authModalInitialEmail: string;
+  pendingAuthRedirect: string | null;
+  clearPendingAuthRedirect: () => void;
   navDrawerOpen: boolean;
   setNavDrawerOpen: (open: boolean) => void;
   firstVisitPromptOpen: boolean;
   setFirstVisitPromptOpen: (open: boolean) => void;
-  openAuthModal: (mode?: AuthModalMode) => void;
+  openAuthModal: (mode?: AuthModalMode, options?: OpenAuthModalOptions) => void;
   closeAuthModal: () => void;
+  consumeAuthSuccessOverride: () => { suppressRedirect: boolean; onSuccess?: () => void };
   refreshUser: () => Promise<UserProfile | null>;
   refreshSettings: () => Promise<void>;
   toggleFavorite: (propertyId: string) => Promise<void>;
@@ -87,7 +115,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState<AuthModalMode>('login');
+  const [authModalMode, setAuthModalMode] = useState<AuthModalMode>('register');
+  const [authModalNotice, setAuthModalNotice] = useState<string | null>(null);
+  const [authModalInitialEmail, setAuthModalInitialEmail] = useState('');
+  const [pendingAuthRedirect, setPendingAuthRedirect] = useState<string | null>(null);
+  const authCallbackStartedRef = useRef(false);
+  const authSuccessOverrideRef = useRef<{
+    suppressRedirect: boolean;
+    onSuccess?: () => void;
+  }>({ suppressRedirect: false });
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [firstVisitPromptOpen, setFirstVisitPromptOpen] = useState(false);
   const [ownerViewingWebsite, setOwnerViewingWebsite] = useState<boolean>(() => {
@@ -287,7 +323,144 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     void refreshSettings();
-    void refreshUser();
+
+    const handleInitialAuthCallback = async () => {
+      if (authCallbackStartedRef.current) return;
+      authCallbackStartedRef.current = true;
+
+      if (typeof window === 'undefined') {
+        await refreshUser();
+        return;
+      }
+
+      const parsed = parseSupabaseAuthCallbackUrl(
+        window.location.pathname,
+        window.location.search,
+        window.location.hash
+      );
+
+      if (parsed.kind === 'none') {
+        await refreshUser();
+        return;
+      }
+
+      if (parsed.kind === 'expired') {
+        window.history.replaceState({}, '', parsed.cleanPath);
+        await refreshUser();
+        setAuthModalNotice(
+          'Your verification link has expired or is no longer valid. Enter your email below to resend a fresh link.'
+        );
+        setAuthModalMode('expired-link');
+        setAuthModalOpen(true);
+        return;
+      }
+
+      if (!isSupabaseConfigured || !supabase) {
+        window.history.replaceState({}, '', parsed.cleanPath);
+        await refreshUser();
+        return;
+      }
+
+      if (parsed.kind === 'recovery') {
+        try {
+          if (parsed.flow === 'token_hash' && parsed.tokenHash) {
+            await verifyEmailOtpTokenHash(parsed.tokenHash, 'recovery');
+          } else {
+            const {
+              data: { session },
+            } = await supabase.auth.getSession();
+            if (!session && parsed.flow === 'pkce' && parsed.code) {
+              await exchangeAuthCodeForSession(parsed.code);
+            }
+          }
+          window.history.replaceState({}, '', parsed.cleanPath);
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
+          if (session?.user) {
+            setAuthModalNotice(null);
+            setAuthModalMode('recovery');
+            setAuthModalOpen(true);
+          } else {
+            setAuthModalNotice(
+              'This password reset link has expired or is no longer valid. Request a new reset link below.'
+            );
+            setAuthModalMode('forgot');
+            setAuthModalOpen(true);
+          }
+        } catch {
+          window.history.replaceState({}, '', parsed.cleanPath);
+          setAuthModalNotice(
+            'This password reset link has expired or is no longer valid. Request a new reset link below.'
+          );
+          setAuthModalMode('forgot');
+          setAuthModalOpen(true);
+        }
+        await refreshUser();
+        return;
+      }
+
+      // parsed.kind === 'verification'
+      try {
+        let {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session && parsed.flow === 'token_hash' && parsed.tokenHash) {
+          const otpType =
+            parsed.otpType === 'email' || parsed.otpType === 'magiclink'
+              ? parsed.otpType
+              : 'signup';
+          await verifyEmailOtpTokenHash(parsed.tokenHash, otpType);
+          const next = await supabase.auth.getSession();
+          session = next.data.session;
+        } else if (!session && parsed.flow === 'pkce' && parsed.code) {
+          await exchangeAuthCodeForSession(parsed.code);
+          const next = await supabase.auth.getSession();
+          session = next.data.session;
+        }
+
+        window.history.replaceState({}, '', parsed.cleanPath);
+
+        if (session?.user) {
+          const profile = await refreshUser();
+          showToast('Email verified. Welcome!', 'info');
+          setAuthModalOpen(false);
+          let pendingReview = false;
+          try {
+            pendingReview =
+              window.sessionStorage.getItem('dr_pending_review_after_auth') === '1';
+          } catch {
+            pendingReview = false;
+          }
+          if (pendingReview) {
+            setPendingAuthRedirect('/#reviews');
+          } else if (profile?.role === 'owner') {
+            exitOwnerWebsiteView();
+            setPendingAuthRedirect('/owner-dashboard');
+          } else {
+            setPendingAuthRedirect('/my-account');
+          }
+        } else {
+          await refreshUser();
+          setAuthModalNotice(
+            'Your verification link has expired or is no longer valid. Enter your email below to resend a fresh link.'
+          );
+          setAuthModalMode('expired-link');
+          setAuthModalOpen(true);
+        }
+      } catch {
+        window.history.replaceState({}, '', parsed.cleanPath);
+        await refreshUser();
+        setAuthModalNotice(
+          'Your verification link has expired or is no longer valid. Enter your email below to resend a fresh link.'
+        );
+        setAuthModalMode('expired-link');
+        setAuthModalOpen(true);
+      }
+    };
+
+    void handleInitialAuthCallback();
 
     if (!isSupabaseConfigured || !supabase) return;
 
@@ -295,6 +468,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') {
+        setAuthModalNotice(null);
         setAuthModalMode('recovery');
         setAuthModalOpen(true);
       } else if (event === 'SIGNED_OUT') {
@@ -314,17 +488,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       subscription.unsubscribe();
     };
-  }, [refreshSettings, refreshUser, exitOwnerWebsiteView]);
+  }, [refreshSettings, refreshUser, exitOwnerWebsiteView, showToast]);
 
-  const openAuthModal = useCallback((mode: AuthModalMode = 'login') => {
-    markSignInPromptShown();
-    setFirstVisitPromptOpen(false);
-    setAuthModalMode(mode);
-    setAuthModalOpen(true);
-  }, []);
+  const openAuthModal = useCallback(
+    (mode: AuthModalMode = 'register', options?: OpenAuthModalOptions) => {
+      markSignInPromptShown();
+      setFirstVisitPromptOpen(false);
+      setAuthModalNotice(options?.notice ?? null);
+      if (options?.email !== undefined) {
+        setAuthModalInitialEmail(options.email);
+      }
+      authSuccessOverrideRef.current = {
+        suppressRedirect: Boolean(options?.suppressRedirect),
+        onSuccess: options?.onSuccess,
+      };
+      setAuthModalMode(mode);
+      setAuthModalOpen(true);
+    },
+    []
+  );
 
   const closeAuthModal = useCallback(() => {
     setAuthModalOpen(false);
+    setAuthModalNotice(null);
+    authSuccessOverrideRef.current = { suppressRedirect: false };
+  }, []);
+
+  const consumeAuthSuccessOverride = useCallback(() => {
+    const current = authSuccessOverrideRef.current;
+    authSuccessOverrideRef.current = { suppressRedirect: false };
+    return current;
+  }, []);
+
+  const clearPendingAuthRedirect = useCallback(() => {
+    setPendingAuthRedirect(null);
   }, []);
 
   const toggleFavorite = useCallback(
@@ -394,12 +591,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         favoriteIds,
         authModalOpen,
         authModalMode,
+        authModalNotice,
+        authModalInitialEmail,
+        pendingAuthRedirect,
+        clearPendingAuthRedirect,
         navDrawerOpen,
         setNavDrawerOpen,
         firstVisitPromptOpen,
         setFirstVisitPromptOpen,
         openAuthModal,
         closeAuthModal,
+        consumeAuthSuccessOverride,
         refreshUser,
         refreshSettings,
         toggleFavorite,

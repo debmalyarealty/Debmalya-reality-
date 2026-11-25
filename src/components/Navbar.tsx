@@ -4,9 +4,7 @@ import {
   ChevronDown,
   LayoutDashboard,
   LogOut,
-  MapPin,
   Moon,
-  Phone,
   Sun,
   User,
 } from 'lucide-react';
@@ -29,7 +27,6 @@ export const Navbar: React.FC = () => {
     toggleTheme,
     user,
     openAuthModal,
-    settings,
     logout,
     enterOwnerWebsiteView,
     exitOwnerWebsiteView,
@@ -46,8 +43,29 @@ export const Navbar: React.FC = () => {
   const drawerRef = useRef<HTMLElement>(null);
   const wasOpenRef = useRef(false);
 
+  const [isLandscapeCompact, setIsLandscapeCompact] = useState<boolean>(() =>
+    typeof window !== 'undefined'
+      ? window.matchMedia('(orientation: landscape) and (max-height: 540px)').matches
+      : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(orientation: landscape) and (max-height: 540px)');
+    const sync = () => setIsLandscapeCompact(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    window.addEventListener('resize', sync);
+    window.addEventListener('orientationchange', sync);
+    return () => {
+      mq.removeEventListener('change', sync);
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('orientationchange', sync);
+    };
+  }, []);
+
   const isHome = location.pathname === '/';
-  const overHero = isHome && !scrolled;
+  const overHero = isHome && !scrolled && !isLandscapeCompact;
   const isOwnerOnPublicSite =
     user?.role === 'owner' &&
     !location.pathname.startsWith('/owner-dashboard') &&
@@ -163,12 +181,6 @@ export const Navbar: React.FC = () => {
     navigate(path);
   };
 
-  const phoneDisplay = settings?.phone || '+91 86498 58954';
-  const phoneHref = `tel:${phoneDisplay.replace(/\s+/g, '')}`;
-  const addressDisplay =
-    settings?.address ||
-    'Sevoke Road, Ward Number 13, Dasrath Pally, Bhanu Nagar, Siliguri 734001';
-
   const navItems: Array<
     | { kind: 'section'; id: string; label: string }
     | { kind: 'properties'; label: string }
@@ -245,10 +257,10 @@ export const Navbar: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setDrawerOpen(false);
-                  openAuthModal('login');
+                  openAuthModal('register');
                 }}
-                aria-label="Sign in or create account"
-                title="Sign in or create account"
+                aria-label="Create account or log in"
+                title="Create account or log in"
                 className={`min-h-[44px] min-w-[44px] px-0 min-[420px]:px-3.5 inline-flex items-center justify-center gap-1.5 rounded-full transition-all duration-200 cursor-pointer shrink-0 whitespace-nowrap ${
                   overHero
                     ? 'bg-black/45 border border-white/40 text-white hover:bg-black/65 backdrop-blur-md'
@@ -299,13 +311,13 @@ export const Navbar: React.FC = () => {
               title="Menu"
               aria-expanded={drawerOpen}
               aria-controls="universal-nav-drawer"
-              className={`h-11 w-11 inline-flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer shrink-0 ${
+              className={`min-h-[44px] min-w-[44px] px-0 min-[420px]:px-3.5 inline-flex items-center justify-center gap-2 rounded-full transition-all duration-200 cursor-pointer shrink-0 whitespace-nowrap ${
                 overHero
                   ? 'bg-black/45 border border-white/45 text-white hover:bg-black/65 backdrop-blur-md'
                   : 'bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover)]'
               }`}
             >
-              <span aria-hidden="true" className="relative w-4 h-3.5 flex flex-col justify-between">
+              <span aria-hidden="true" className="relative w-4 h-3.5 flex flex-col justify-between shrink-0">
                 <span
                   className={`block h-[1.5px] w-4 rounded-full bg-current origin-center transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                     drawerOpen ? 'translate-y-[6px] rotate-45' : ''
@@ -321,6 +333,9 @@ export const Navbar: React.FC = () => {
                     drawerOpen ? '-translate-y-[6px] -rotate-45' : ''
                   }`}
                 />
+              </span>
+              <span className="hidden min-[420px]:inline text-[13px] font-medium whitespace-nowrap">
+                Menu
               </span>
             </button>
           </div>
@@ -347,10 +362,10 @@ export const Navbar: React.FC = () => {
         aria-label="Site navigation"
         aria-hidden={!drawerOpen}
         inert={!drawerOpen}
-        className={`fixed inset-0 h-[100dvh] max-h-[100dvh] z-50 bg-[var(--bg-canvas)] text-[var(--text-primary)] flex flex-col overflow-hidden transition-[transform,opacity,visibility] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        className={`fixed inset-x-0 top-0 h-[90dvh] max-h-[90dvh] z-50 bg-[var(--bg-canvas)] text-[var(--text-primary)] flex flex-col overflow-hidden rounded-b-[24px] border-b border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] transition-[transform,opacity,visibility] duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
           drawerOpen
-            ? 'opacity-100 translate-x-0 pointer-events-auto visible'
-            : 'opacity-0 translate-x-6 pointer-events-none invisible'
+            ? 'opacity-100 translate-y-0 pointer-events-auto visible'
+            : 'opacity-0 -translate-y-4 pointer-events-none invisible'
         }`}
       >
         {/* Top Row inside Overlay */}
@@ -403,7 +418,7 @@ export const Navbar: React.FC = () => {
         </div>
 
         {/* Main Navigation Split */}
-        <div className="flex-1 min-h-0 overflow-y-auto fluid-container pt-3 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)] grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-start lg:items-end">
+        <div className="flex-1 min-h-0 overflow-y-auto fluid-container pt-3 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)] grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10 items-start">
           <nav
             className="lg:col-span-7 flex flex-col items-start gap-1 sm:gap-2.5 min-w-0"
             aria-label="Primary drawer menu"
@@ -431,7 +446,7 @@ export const Navbar: React.FC = () => {
                       type="button"
                       onClick={() => setPropertiesExpanded((v) => !v)}
                       aria-expanded={propertiesExpanded}
-                      className={`font-display text-[clamp(1.75rem,4.6vw,3.5rem)] font-medium leading-[1.15] min-h-[44px] inline-flex items-center gap-3 transition-colors cursor-pointer ${
+                      className={`font-display text-[clamp(1.75rem,4.6vw,3.5rem)] font-medium leading-[1.15] min-h-[44px] max-w-full break-anywhere text-left inline-flex items-center gap-3 transition-colors cursor-pointer ${
                         isPropActive
                           ? 'text-[var(--accent-primary)]'
                           : 'text-[var(--text-primary)] hover:text-[var(--accent-primary)]'
@@ -481,7 +496,7 @@ export const Navbar: React.FC = () => {
                   style={{
                     transitionDelay: `${delayMs}ms`,
                   }}
-                  className={`font-display text-[clamp(1.75rem,4.6vw,3.5rem)] font-medium leading-[1.15] min-h-[44px] text-left transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
+                  className={`font-display text-[clamp(1.75rem,4.6vw,3.5rem)] font-medium leading-[1.15] min-h-[44px] max-w-full break-anywhere text-left transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
                     drawerOpen
                       ? 'opacity-100 translate-y-0'
                       : 'opacity-0 translate-y-4'
@@ -497,40 +512,16 @@ export const Navbar: React.FC = () => {
             })}
           </nav>
 
-          {/* Editorial Office Info & Account Block */}
+          {/* Account Block */}
           <div
-            style={{ transitionDelay: drawerOpen ? '260ms' : '0ms' }}
-            className={`lg:col-span-5 space-y-5 pb-2 min-w-0 transition-all duration-500 ${
+            style={{ transitionDelay: drawerOpen ? '200ms' : '0ms' }}
+            className={`lg:col-span-5 space-y-5 pb-2 min-w-0 transition-[transform,opacity] duration-400 motion-reduce:transition-none ${
               drawerOpen
                 ? 'opacity-100 translate-y-0'
                 : 'opacity-0 translate-y-4'
             }`}
           >
-            <div className="space-y-2 text-base text-[var(--text-secondary)]">
-              <p className="inline-flex items-start gap-2 leading-relaxed break-anywhere">
-                <MapPin className="w-4 h-4 mt-1 shrink-0 text-[var(--accent-primary)]" />
-                <span>{addressDisplay}</span>
-              </p>
-            </div>
-
-            <div className="flex flex-col items-start gap-3.5">
-              <button
-                type="button"
-                onClick={() => navigateToSection('contact')}
-                className="btn-primary-lux min-h-[44px] px-7 py-3 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium cursor-pointer"
-              >
-                Get in touch
-              </button>
-              <a
-                href={phoneHref}
-                className="min-h-[44px] px-6 py-3 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] text-sm font-medium inline-flex items-center gap-2 transition-colors whitespace-nowrap"
-              >
-                <Phone className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-                <span className="tabular-nums">{phoneDisplay}</span>
-              </a>
-            </div>
-
-            <div className="pt-4 border-t border-[var(--border-hairline)]">
+            <div className="pt-2 border-t lg:border-t-0 border-[var(--border-hairline)]">
               {user ? (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <button
@@ -543,7 +534,7 @@ export const Navbar: React.FC = () => {
                         navigateToPath('/my-account');
                       }
                     }}
-                    className="min-h-[44px] inline-flex items-center gap-2 text-sm font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
+                    className="min-h-[44px] inline-flex items-center gap-2 text-base font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] cursor-pointer"
                   >
                     <LayoutDashboard className="w-4 h-4 text-[var(--accent-primary)]" />
                     <span>Dashboard</span>
@@ -555,7 +546,7 @@ export const Navbar: React.FC = () => {
                       setDrawerOpen(false);
                       await logout();
                     }}
-                    className="min-h-[44px] px-4 rounded-full border border-[var(--border-hairline)] hover:border-rose-500/50 text-[13px] font-medium text-[var(--text-secondary)] hover:text-rose-500 inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                    className="min-h-[44px] px-4 rounded-full border border-[var(--border-hairline)] hover:border-rose-500/50 text-[13px] font-medium text-[var(--text-secondary)] hover:text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <LogOut className="w-3.5 h-3.5" />
                     <span>Sign out</span>
@@ -566,12 +557,12 @@ export const Navbar: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setDrawerOpen(false);
-                    openAuthModal('login');
+                    openAuthModal('register');
                   }}
-                  className="min-h-[44px] inline-flex items-center gap-2 text-sm font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
+                  className="min-h-[44px] inline-flex items-center gap-2 text-base font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] cursor-pointer"
                 >
                   <User className="w-4 h-4 text-[var(--accent-primary)]" />
-                  <span>Sign in / Create account</span>
+                  <span>Create account / Log in</span>
                 </button>
               )}
             </div>

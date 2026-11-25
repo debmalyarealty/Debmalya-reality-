@@ -12,7 +12,6 @@ import {
   LogOut,
   Settings,
   Star,
-  Trash2,
   User,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -23,9 +22,7 @@ import {
   getCachedPublicProperties,
   isClientDashboardCacheFresh,
   isPublicPropertiesCacheFresh,
-  removeSavedSearchById,
   saveUserPreferences,
-  submitInquiry,
   updateOwnProfile,
   type ClientDashboardData,
 } from '../lib/supabaseData';
@@ -33,9 +30,7 @@ import {
   buildSearchQueryString,
   formatINR,
   formatReviewDate,
-  savedSearchToFilters,
 } from '../lib/realtyLogic';
-import { navigateWithTransition } from '../lib/motion';
 import { applyDocumentMeta, buildSiteMetaTags } from '../lib/metaTags';
 import type {
   Booking,
@@ -43,7 +38,6 @@ import type {
   Inquiry,
   Property,
   Review,
-  SavedSearch,
 } from '../types/realty';
 import { PropertyCard } from '../components/PropertyCard';
 import { BackButton } from '../components/BackButton';
@@ -133,9 +127,6 @@ export const CustomerDashboardPage: React.FC = () => {
   const [favorites, setFavorites] = useState<Property[]>(
     initialCached?.favorites ?? []
   );
-  const [savedSearches, setSavedSearches] = useState<SavedSearch[]>(
-    initialCached?.savedSearches ?? []
-  );
   const [bookings, setBookings] = useState<Booking[]>(
     initialCached?.bookings ?? []
   );
@@ -172,12 +163,6 @@ export const CustomerDashboardPage: React.FC = () => {
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [savedPrefs, setSavedPrefs] = useState(false);
 
-  // Quick message form on Home (starts empty with friendly validation)
-  const [qInterest, setQInterest] = useState('');
-  const [qMsg, setQMsg] = useState('');
-  const [qError, setQError] = useState<string | null>(null);
-  const [sendingInq, setSendingInq] = useState(false);
-
   useEffect(() => {
     const activeMeta = CLIENT_TABS.find((t) => t.key === activeTab);
     applyDocumentMeta(
@@ -197,7 +182,6 @@ export const CustomerDashboardPage: React.FC = () => {
 
   const applyClientData = (dashboardData: ClientDashboardData) => {
     setFavorites(dashboardData.favorites);
-    setSavedSearches(dashboardData.savedSearches);
     setBookings(dashboardData.bookings);
     setInquiries(dashboardData.inquiries);
     setReviews(dashboardData.reviews);
@@ -277,26 +261,6 @@ export const CustomerDashboardPage: React.FC = () => {
     switchTab('overview');
   };
 
-  const applySavedSearch = (saved: SavedSearch) => {
-    const qs = buildSearchQueryString(savedSearchToFilters(saved));
-    navigateWithTransition(navigate, `/properties${qs}`);
-  };
-
-  const removeSavedSearch = async (id: string) => {
-    const prev = savedSearches;
-    setSavedSearches((list) => list.filter((s) => s.id !== id));
-    try {
-      await removeSavedSearchById(user.id, id);
-      showToast('Saved search removed', 'removed');
-    } catch (err) {
-      setSavedSearches(prev);
-      showToast(
-        err instanceof Error ? err.message : 'Unable to remove saved search.',
-        'error'
-      );
-    }
-  };
-
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName.trim()) {
@@ -337,41 +301,6 @@ export const CustomerDashboardPage: React.FC = () => {
       );
     } finally {
       setSavingPrefs(false);
-    }
-  };
-
-  const handleQuickInquiry = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!qInterest.trim()) {
-      setQError('Please choose what you need help with.');
-      return;
-    }
-    if (!qMsg.trim()) {
-      setQError('Please write a short message before sending.');
-      return;
-    }
-    setQError(null);
-    setSendingInq(true);
-    try {
-      await submitInquiry({
-        user_id: user.id,
-        name: user.full_name || fullName || 'Client',
-        phone: user.phone || phone || '',
-        email: user.email,
-        interest: qInterest,
-        message: qMsg,
-      });
-      setQInterest('');
-      setQMsg('');
-      showToast('Message sent', 'saved');
-      await loadClientData(user.id, true);
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Unable to send message.',
-        'error'
-      );
-    } finally {
-      setSendingInq(false);
     }
   };
 
@@ -523,122 +452,9 @@ export const CustomerDashboardPage: React.FC = () => {
                       </p>
                     </button>
                 ))}
-              </div>
-
-              {/* Saved Searches Quick Access */}
-              <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 shadow-[var(--shadow-subtle)] space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <h2 className="font-display text-xl font-semibold text-[var(--text-primary)]">
-                      Saved searches
-                    </h2>
-                    <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">
-                      Quickly re-open your saved property filters.
-                    </p>
                   </div>
-                  <Link
-                    to="/properties"
-                    className="min-h-[44px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-1.5"
-                  >
-                    <span>Browse properties</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </Link>
                 </div>
-
-                {savedSearches.length === 0 ? (
-                  <p className="text-sm text-[var(--text-secondary)]">
-                    No saved searches yet. Tap &ldquo;Save search&rdquo; when filtering listings on Browse properties.
-                  </p>
-                ) : (
-                  <div className="space-y-2.5">
-                    {savedSearches.slice(0, 3).map((saved) => (
-                      <div
-                        key={saved.id}
-                        className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
-                            {saved.name}
-                          </p>
-                          <p className="text-[13px] text-[var(--text-muted)] tabular-nums mt-0.5">
-                            Saved {formatReviewDate(saved.created_at)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => applySavedSearch(saved)}
-                            className="btn-primary-lux min-h-[44px] px-4 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <span>Apply filters</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void removeSavedSearch(saved.id)}
-                            aria-label={`Remove saved search ${saved.name}`}
-                            className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-full border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-rose-500 cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              {/* Quick Message */}
-              <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 shadow-[var(--shadow-subtle)] space-y-4">
-                <h2 className="font-display text-xl font-semibold text-[var(--text-primary)]">
-                  Ask Debmalya Realty
-                </h2>
-                <form onSubmit={handleQuickInquiry} noValidate className="space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <select
-                      aria-label="Topic"
-                      value={qInterest}
-                      onChange={(e) => {
-                        setQInterest(e.target.value);
-                        setQError(null);
-                      }}
-                      className="min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
-                    >
-                      <option value="">Choose a topic *</option>
-                      <option value="Property Buying">Buying a home or plot</option>
-                      <option value="Property Selling">Selling a property</option>
-                      <option value="Rental Services">Renting a place</option>
-                      <option value="Construction & Development">Construction help</option>
-                      <option value="Site Visit & Estimate">Site visit or estimate</option>
-                    </select>
-                  </div>
-                  <textarea
-                    rows={3}
-                    placeholder="Write what you are looking for in Siliguri..."
-                    value={qMsg}
-                    onChange={(e) => {
-                      setQMsg(e.target.value);
-                      setQError(null);
-                    }}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
-                  />
-                  {qError && (
-                    <p role="alert" className="text-[13px] font-medium text-rose-500">
-                      {qError}
-                    </p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={sendingInq}
-                    className="btn-primary-lux min-h-[44px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
-                  >
-                    {sendingInq && <Loader2 className="w-4 h-4 animate-spin" />}
-                    <span>{sendingInq ? 'Sending...' : 'Send message'}</span>
-                  </button>
-                </form>
-              </section>
-            </div>
-          )}
+              )}
 
           {/* 2. MY VISIT REQUESTS */}
           {activeTab === 'bookings' && (
@@ -877,49 +693,6 @@ export const CustomerDashboardPage: React.FC = () => {
                   {favorites.map((p) => (
                     <PropertyCard key={p.id} property={p} />
                   ))}
-                </div>
-              )}
-
-              {savedSearches.length > 0 && (
-                <div className="space-y-3 pt-4 border-t border-[var(--border-hairline)]">
-                  <h3 className="font-display text-xl font-semibold text-[var(--text-primary)]">
-                    Saved searches ({savedSearches.length})
-                  </h3>
-                  <div className="space-y-2.5">
-                    {savedSearches.map((saved) => (
-                      <div
-                        key={saved.id}
-                        className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
-                            {saved.name}
-                          </p>
-                          <p className="text-[13px] text-[var(--text-muted)] tabular-nums">
-                            Saved {new Date(saved.created_at).toLocaleDateString('en-IN')}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => applySavedSearch(saved)}
-                            className="min-h-[44px] px-4 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-[13px] font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <span>Apply filters</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void removeSavedSearch(saved.id)}
-                            aria-label={`Remove saved search ${saved.name}`}
-                            className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-full border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-rose-500 cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
             </div>
@@ -1166,7 +939,7 @@ export const CustomerDashboardPage: React.FC = () => {
                           maxPrice: prefs.max_budget ?? '',
                           minBedrooms: prefs.min_bedrooms ?? '',
                         });
-                        navigateWithTransition(navigate, `/properties${qs}`);
+                        navigate(`/properties${qs}`);
                       }}
                       className="min-h-[44px] px-4 rounded-full border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
@@ -1186,7 +959,7 @@ export const CustomerDashboardPage: React.FC = () => {
       {/* Mobile Fixed Bottom Tab Bar */}
       <nav
         aria-label="Client mobile tabs"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-6 border-t border-[var(--border-hairline)] bg-[var(--bg-surface)]/96 backdrop-blur-2xl pb-[env(safe-area-inset-bottom,0px)] px-[env(safe-area-inset-left,0px)]"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-6 border-t border-[var(--border-hairline)] bg-[var(--bg-surface)]/96 backdrop-blur-2xl pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]"
       >
         {CLIENT_TABS.map(({ key, mobileLabel, Icon }) => {
           const active = activeTab === key;

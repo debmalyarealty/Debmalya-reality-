@@ -72,7 +72,7 @@ export const BackendNotice: React.FC<BackendNoticeProps> = ({
           type="button"
           onClick={() => setDismissed(true)}
           aria-label="Dismiss connection error"
-          className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+          className="h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -121,7 +121,7 @@ export const BackendNotice: React.FC<BackendNoticeProps> = ({
         type="button"
         onClick={() => setDismissed(true)}
         aria-label="Dismiss backend notice"
-        className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+        className="h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
       >
         <X className="w-4 h-4" />
       </button>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
@@ -31,9 +31,12 @@ import { goBackOrFallback, LUX_EASE } from '../lib/motion';
 import {
   formatINRReadable,
   isPropertyActiveOpportunity,
-  validateAppointmentInput,
-  validateInquiryInput,
+  validateAppointmentFields,
+  validateInquiryFields,
+  type AppointmentFieldErrors,
+  type InquiryFieldErrors,
 } from '../lib/realtyLogic';
+import { useKeyboardSafeForm } from '../lib/formKeyboard';
 import {
   applyDocumentMeta,
   buildPropertyMetaTags,
@@ -49,7 +52,16 @@ export const PropertyDetailPage: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const prefersReduced = useReducedMotion();
-  const { settings, user, favoriteIds, toggleFavorite, openAuthModal } = useApp();
+  const {
+    settings,
+    user,
+    favoriteIds,
+    toggleFavorite,
+    openAuthModal,
+    authModalOpen,
+    navDrawerOpen,
+    firstVisitPromptOpen,
+  } = useApp();
 
   const [property, setProperty] = useState<Property | null>(() => {
     if (!slug) return null;
@@ -75,11 +87,15 @@ export const PropertyDetailPage: React.FC = () => {
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
+  const gallerySwipeStartX = useRef<number | null>(null);
+  const lightboxSwipeStartX = useRef<number | null>(null);
 
   // Interested? Card Mode
   const [interestedMode, setInterestedMode] = useState<null | 'visit' | 'question'>(null);
 
   // Site Visit / Booking Form
+  const siteVisitFormRef = useRef<HTMLFormElement>(null);
+  const { keyboardOpen: visitKeyboardOpen } = useKeyboardSafeForm(siteVisitFormRef);
   const [vName, setVName] = useState('');
   const [vPhone, setVPhone] = useState('');
   const [vEmail, setVEmail] = useState('');
@@ -87,16 +103,20 @@ export const PropertyDetailPage: React.FC = () => {
   const [vTime, setVTime] = useState('11:00 AM');
   const [vMsg, setVMsg] = useState('');
   const [vSubmitting, setVSubmitting] = useState(false);
+  const [vFieldErrors, setVFieldErrors] = useState<AppointmentFieldErrors>({});
   const [vError, setVError] = useState<string | null>(null);
   const [vShakeKey, setVShakeKey] = useState(0);
   const [vSuccess, setVSuccess] = useState<string | null>(null);
 
   // Quick Enquiry Form
+  const enquiryFormRef = useRef<HTMLFormElement>(null);
+  const { keyboardOpen: enquiryKeyboardOpen } = useKeyboardSafeForm(enquiryFormRef);
   const [eName, setEName] = useState('');
   const [ePhone, setEPhone] = useState('');
   const [eEmail, setEEmail] = useState('');
   const [eMsg, setEMsg] = useState('');
   const [eSubmitting, setESubmitting] = useState(false);
+  const [eFieldErrors, setEFieldErrors] = useState<InquiryFieldErrors>({});
   const [eError, setEError] = useState<string | null>(null);
   const [eShakeKey, setEShakeKey] = useState(0);
   const [eSuccess, setESuccess] = useState<string | null>(null);
@@ -220,7 +240,11 @@ export const PropertyDetailPage: React.FC = () => {
       try {
         await navigator.share({
           title: property.title,
-          text: `${property.title} — ${formatINRReadable(property.price_inr, property.listing_type)}`,
+          text: `${property.title} — ${formatINRReadable(
+            property.price_inr,
+            property.listing_type,
+            property.price_unit
+          )}`,
           url,
         });
         return;
@@ -237,9 +261,67 @@ export const PropertyDetailPage: React.FC = () => {
     }
   };
 
+  const handleGalleryPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    gallerySwipeStartX.current = e.clientX;
+  };
+
+  const handleGalleryPointerUp = (
+    e: React.PointerEvent<HTMLDivElement>,
+    total: number
+  ) => {
+    if (gallerySwipeStartX.current === null || total <= 1) {
+      gallerySwipeStartX.current = null;
+      return;
+    }
+    const delta = e.clientX - gallerySwipeStartX.current;
+    gallerySwipeStartX.current = null;
+    if (delta > 40) {
+      setActiveImageIdx((i) => (i - 1 + total) % total);
+    } else if (delta < -40) {
+      setActiveImageIdx((i) => (i + 1) % total);
+    }
+  };
+
+  const handleGalleryTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    if (e.touches.length === 1) {
+      gallerySwipeStartX.current = e.touches[0].clientX;
+    }
+  };
+
+  const handleGalleryTouchEnd = (
+    e: React.TouchEvent<HTMLDivElement>,
+    total: number
+  ) => {
+    if (gallerySwipeStartX.current === null || total <= 1) {
+      gallerySwipeStartX.current = null;
+      return;
+    }
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const delta = touch.clientX - gallerySwipeStartX.current;
+    gallerySwipeStartX.current = null;
+    if (delta > 40) {
+      setActiveImageIdx((i) => (i - 1 + total) % total);
+    } else if (delta < -40) {
+      setActiveImageIdx((i) => (i + 1) % total);
+    }
+  };
+
+  const handleStickyBookVisit = () => {
+    setInterestedMode('visit');
+    window.setTimeout(() => {
+      document.getElementById('property-enquiry-panel')?.scrollIntoView({
+        behavior: prefersReduced ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    }, 40);
+  };
+
   const handleSiteVisitSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!property) return;
+    if (!property || vSubmitting) return;
     if (!user) {
       openAuthModal('login');
       return;
@@ -247,7 +329,7 @@ export const PropertyDetailPage: React.FC = () => {
     setVError(null);
     setVSuccess(null);
 
-    const err = validateAppointmentInput({
+    const { fields, firstError } = validateAppointmentFields({
       customer_name: vName,
       phone: vPhone,
       email: vEmail,
@@ -255,11 +337,23 @@ export const PropertyDetailPage: React.FC = () => {
       preferred_date: vDate,
       preferred_time: vTime,
     });
-    if (err) {
-      setVError(err);
+    if (firstError) {
+      setVFieldErrors(fields);
+      setVError(firstError);
       setVShakeKey((k) => k + 1);
+      const firstId = fields.customer_name
+        ? 'visit-name'
+        : fields.phone
+        ? 'visit-phone'
+        : fields.email
+        ? 'visit-email'
+        : fields.preferred_date
+        ? 'visit-date'
+        : 'visit-time';
+      document.getElementById(firstId)?.focus();
       return;
     }
+    setVFieldErrors({});
 
     setVSubmitting(true);
     try {
@@ -291,22 +385,32 @@ export const PropertyDetailPage: React.FC = () => {
 
   const handleEnquirySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!property) return;
+    if (!property || eSubmitting) return;
     setEError(null);
     setESuccess(null);
 
-    const err = validateInquiryInput({
+    const { fields, firstError } = validateInquiryFields({
       name: eName,
       phone: ePhone,
       email: eEmail,
       interested_in: property.title,
       message: eMsg,
     });
-    if (err) {
-      setEError(err);
+    if (firstError) {
+      setEFieldErrors(fields);
+      setEError(firstError);
       setEShakeKey((k) => k + 1);
+      const firstId = fields.name
+        ? 'enquiry-name'
+        : fields.phone
+        ? 'enquiry-phone'
+        : fields.email
+        ? 'enquiry-email'
+        : 'enquiry-message';
+      document.getElementById(firstId)?.focus();
       return;
     }
+    setEFieldErrors({});
 
     setESubmitting(true);
     try {
@@ -378,7 +482,7 @@ export const PropertyDetailPage: React.FC = () => {
   const images = property.images;
   const activeImg = images[activeImageIdx]?.url;
   const googleMapsUrl =
-    property.latitude && property.longitude
+    property.latitude != null && property.longitude != null
       ? `https://www.google.com/maps/search/?api=1&query=${property.latitude},${property.longitude}`
       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
           `${property.address_detail ? `${property.address_detail}, ` : ''}${property.location}, Siliguri, West Bengal`
@@ -428,7 +532,17 @@ export const PropertyDetailPage: React.FC = () => {
 
       {/* Gallery */}
       <section aria-label="Property Image Gallery" className="space-y-3">
-        <div className="relative aspect-[16/9] max-h-[540px] w-full rounded-2xl overflow-hidden border border-[var(--border-hairline)] bg-[var(--bg-surface-muted)]">
+        <div
+          onDragStart={(e) => e.preventDefault()}
+          onTouchStart={handleGalleryTouchStart}
+          onTouchEnd={(e) => handleGalleryTouchEnd(e, images.length)}
+          onPointerDown={handleGalleryPointerDown}
+          onPointerUp={(e) => handleGalleryPointerUp(e, images.length)}
+          onPointerCancel={() => {
+            gallerySwipeStartX.current = null;
+          }}
+          className="relative aspect-[4/3] sm:aspect-[16/9] max-h-[540px] w-full rounded-2xl overflow-hidden border border-[var(--border-hairline)] bg-[var(--bg-surface-muted)] touch-pan-y select-none [&_img]:pointer-events-none"
+        >
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={activeImg || activeImageIdx}
@@ -445,11 +559,22 @@ export const PropertyDetailPage: React.FC = () => {
                   property.location,
                   activeImageIdx
                 )}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover object-center"
+                sizes="(max-width: 1024px) 94vw, 1140px"
                 priority
               />
             </motion.div>
           </AnimatePresence>
+
+          {images.length > 0 && (
+            <span
+              data-testid="gallery-counter"
+              aria-live="polite"
+              className="pointer-events-none absolute bottom-3.5 left-3.5 z-10 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-sm text-white text-[13px] font-medium tabular-nums shadow-sm"
+            >
+              {activeImageIdx + 1}/{images.length}
+            </span>
+          )}
 
           <button
             type="button"
@@ -501,7 +626,8 @@ export const PropertyDetailPage: React.FC = () => {
                 <PropertyImage
                   src={img.url}
                   alt={buildPropertyImageAlt(property.title, property.location, idx)}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover object-center"
+                  sizes="112px"
                 />
               </button>
             ))}
@@ -530,7 +656,11 @@ export const PropertyDetailPage: React.FC = () => {
             </h1>
 
             <p className="font-display text-[clamp(1.75rem,3.8vw,2.5rem)] font-semibold tabular-nums text-[var(--accent-primary)]">
-              {formatINRReadable(property.price_inr, property.listing_type)}
+              {formatINRReadable(
+                property.price_inr,
+                property.listing_type,
+                property.price_unit
+              )}
             </p>
 
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -558,38 +688,55 @@ export const PropertyDetailPage: React.FC = () => {
           </div>
 
           {/* Specifications: Beds, Baths, Area, Furnishing */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-[clamp(1rem,2.5vw,1.25rem)]">
+          <div
+            data-testid="property-key-specs"
+            className="grid grid-cols-4 gap-1.5 sm:gap-4 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 py-3 sm:p-5"
+          >
             <div className="space-y-1 min-w-0">
-              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1.5">
-                <BedDouble className="w-3.5 h-3.5 shrink-0" /> Beds
+              <span className="text-[11px] sm:text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                <BedDouble className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                <span className="truncate">Beds</span>
               </span>
-              <p className="text-base font-semibold tabular-nums text-[var(--text-primary)]">
+              <p className="text-xs sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
                 {property.bedrooms > 0 ? property.bedrooms : '—'}
               </p>
             </div>
             <div className="space-y-1 min-w-0">
-              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1.5">
-                <Bath className="w-3.5 h-3.5 shrink-0" /> Baths
+              <span className="text-[11px] sm:text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                <Bath className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                <span className="truncate">Baths</span>
               </span>
-              <p className="text-base font-semibold tabular-nums text-[var(--text-primary)]">
+              <p className="text-xs sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
                 {property.bathrooms > 0 ? property.bathrooms : '—'}
               </p>
             </div>
             <div className="space-y-1 min-w-0">
-              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1.5">
-                <Maximize2 className="w-3.5 h-3.5 shrink-0" /> Area
+              <span className="text-[11px] sm:text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                <Maximize2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                <span className="truncate">Area</span>
               </span>
-              <p className="text-base font-semibold tabular-nums text-[var(--text-primary)] break-anywhere">
+              <p
+                title={
+                  property.area_sqft > 0
+                    ? `${property.area_sqft.toLocaleString('en-IN')} sq ft`
+                    : undefined
+                }
+                className="text-xs sm:text-base font-semibold tabular-nums text-[var(--text-primary)] leading-snug break-words"
+              >
                 {property.area_sqft > 0
                   ? `${property.area_sqft.toLocaleString('en-IN')} sq ft`
                   : '—'}
               </p>
             </div>
             <div className="space-y-1 min-w-0">
-              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1.5">
-                <Sofa className="w-3.5 h-3.5 shrink-0" /> Furnishing
+              <span className="text-[11px] sm:text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                <Sofa className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                <span className="truncate">Furnishing</span>
               </span>
-              <p className="text-base font-semibold text-[var(--text-primary)] break-anywhere">
+              <p
+                title={property.furnishing || undefined}
+                className="text-xs sm:text-base font-semibold text-[var(--text-primary)] leading-snug truncate"
+              >
                 {property.furnishing || '—'}
               </p>
             </div>
@@ -678,7 +825,12 @@ export const PropertyDetailPage: React.FC = () => {
             )}
 
             {interestedMode === 'visit' && (
-              <form onSubmit={handleSiteVisitSubmit} className="space-y-3.5">
+              <form
+                ref={siteVisitFormRef}
+                noValidate
+                onSubmit={handleSiteVisitSubmit}
+                className="space-y-3.5"
+              >
                 {!user ? (
                   <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-4 space-y-3">
                     <p className="text-[13px] leading-relaxed text-[var(--text-secondary)]">
@@ -687,41 +839,123 @@ export const PropertyDetailPage: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => openAuthModal('login')}
-                      className="btn-primary-lux w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold cursor-pointer"
+                      className="btn-primary-lux w-full min-h-[48px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-base font-semibold cursor-pointer"
                     >
                       Sign In to Book a Site Visit
                     </button>
                   </div>
                 ) : (
                   <>
-                    <input
-                      type="text"
-                      required
-                      aria-label="Your Name"
-                      placeholder="Your Full Name *"
-                      value={vName}
-                      onChange={(e) => setVName(e.target.value)}
-                      className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)]"
-                    />
+                    <div>
+                      <input
+                        id="visit-name"
+                        type="text"
+                        required
+                        autoComplete="name"
+                        aria-label="Your Name"
+                        aria-invalid={Boolean(vFieldErrors.customer_name)}
+                        aria-describedby={
+                          vFieldErrors.customer_name ? 'visit-name-error' : undefined
+                        }
+                        placeholder="Your Full Name *"
+                        value={vName}
+                        onChange={(e) => {
+                          setVName(e.target.value);
+                          if (vFieldErrors.customer_name) {
+                            setVFieldErrors((prev) => ({
+                              ...prev,
+                              customer_name: undefined,
+                            }));
+                          }
+                        }}
+                        className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24 ${
+                          vFieldErrors.customer_name
+                            ? 'border-rose-500'
+                            : 'border-[var(--border-input)]'
+                        }`}
+                      />
+                      {vFieldErrors.customer_name && (
+                        <p
+                          id="visit-name-error"
+                          role="alert"
+                          className="mt-1 text-[13px] text-rose-500"
+                        >
+                          {vFieldErrors.customer_name}
+                        </p>
+                      )}
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <input
-                        type="tel"
-                        required
-                        aria-label="Phone Number"
-                        placeholder="Phone / WhatsApp *"
-                        value={vPhone}
-                        onChange={(e) => setVPhone(e.target.value)}
-                        className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)]"
-                      />
-                      <input
-                        type="email"
-                        required
-                        aria-label="Email Address"
-                        placeholder="Email Address *"
-                        value={vEmail}
-                        onChange={(e) => setVEmail(e.target.value)}
-                        className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)]"
-                      />
+                      <div>
+                        <input
+                          id="visit-phone"
+                          type="tel"
+                          inputMode="tel"
+                          autoComplete="tel"
+                          required
+                          aria-label="Phone Number"
+                          aria-invalid={Boolean(vFieldErrors.phone)}
+                          aria-describedby={
+                            vFieldErrors.phone ? 'visit-phone-error' : undefined
+                          }
+                          placeholder="Phone / WhatsApp *"
+                          value={vPhone}
+                          onChange={(e) => {
+                            setVPhone(e.target.value);
+                            if (vFieldErrors.phone) {
+                              setVFieldErrors((prev) => ({ ...prev, phone: undefined }));
+                            }
+                          }}
+                          className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors tabular-nums scroll-mt-24 scroll-mb-24 ${
+                            vFieldErrors.phone
+                              ? 'border-rose-500'
+                              : 'border-[var(--border-input)]'
+                          }`}
+                        />
+                        {vFieldErrors.phone && (
+                          <p
+                            id="visit-phone-error"
+                            role="alert"
+                            className="mt-1 text-[13px] text-rose-500"
+                          >
+                            {vFieldErrors.phone}
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <input
+                          id="visit-email"
+                          type="email"
+                          inputMode="email"
+                          autoComplete="email"
+                          aria-label="Email Address"
+                          aria-invalid={Boolean(vFieldErrors.email)}
+                          aria-describedby={
+                            vFieldErrors.email ? 'visit-email-error' : undefined
+                          }
+                          placeholder="Email Address (optional)"
+                          value={vEmail}
+                          onChange={(e) => {
+                            setVEmail(e.target.value);
+                            if (vFieldErrors.email) {
+                              setVFieldErrors((prev) => ({ ...prev, email: undefined }));
+                            }
+                          }}
+                          className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24 ${
+                            vFieldErrors.email
+                              ? 'border-rose-500'
+                              : 'border-[var(--border-input)]'
+                          }`}
+                        />
+                        {vFieldErrors.email && (
+                          <p
+                            id="visit-email-error"
+                            role="alert"
+                            className="mt-1 text-[13px] text-rose-500"
+                          >
+                            {vFieldErrors.email}
+                          </p>
+                        )}
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
@@ -735,11 +969,36 @@ export const PropertyDetailPage: React.FC = () => {
                           id="visit-date"
                           type="date"
                           required
+                          aria-invalid={Boolean(vFieldErrors.preferred_date)}
+                          aria-describedby={
+                            vFieldErrors.preferred_date ? 'visit-date-error' : undefined
+                          }
                           min={new Date().toISOString().slice(0, 10)}
                           value={vDate}
-                          onChange={(e) => setVDate(e.target.value)}
-                          className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                          onChange={(e) => {
+                            setVDate(e.target.value);
+                            if (vFieldErrors.preferred_date) {
+                              setVFieldErrors((prev) => ({
+                                ...prev,
+                                preferred_date: undefined,
+                              }));
+                            }
+                          }}
+                          className={`w-full min-h-[48px] px-3 py-2 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24 ${
+                            vFieldErrors.preferred_date
+                              ? 'border-rose-500'
+                              : 'border-[var(--border-hairline)]'
+                          }`}
                         />
+                        {vFieldErrors.preferred_date && (
+                          <p
+                            id="visit-date-error"
+                            role="alert"
+                            className="mt-1 text-[13px] text-rose-500"
+                          >
+                            {vFieldErrors.preferred_date}
+                          </p>
+                        )}
                       </div>
                       <div>
                         <label
@@ -750,9 +1009,18 @@ export const PropertyDetailPage: React.FC = () => {
                         </label>
                         <select
                           id="visit-time"
+                          aria-invalid={Boolean(vFieldErrors.preferred_time)}
                           value={vTime}
-                          onChange={(e) => setVTime(e.target.value)}
-                          className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                          onChange={(e) => {
+                            setVTime(e.target.value);
+                            if (vFieldErrors.preferred_time) {
+                              setVFieldErrors((prev) => ({
+                                ...prev,
+                                preferred_time: undefined,
+                              }));
+                            }
+                          }}
+                          className="w-full min-h-[48px] px-3 py-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24"
                         >
                           <option value="10:00 AM">10:00 AM</option>
                           <option value="11:00 AM">11:00 AM</option>
@@ -763,12 +1031,13 @@ export const PropertyDetailPage: React.FC = () => {
                       </div>
                     </div>
                     <textarea
+                      id="visit-message"
                       rows={2}
                       aria-label="Additional Message"
                       placeholder="Additional notes (optional)"
                       value={vMsg}
                       onChange={(e) => setVMsg(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)]"
+                      className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24"
                     />
 
                     {vError && (
@@ -790,7 +1059,7 @@ export const PropertyDetailPage: React.FC = () => {
                     <button
                       type="submit"
                       disabled={!isActive || vSubmitting}
-                      className="btn-primary-lux w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                      className="btn-primary-lux w-full min-h-[48px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-base font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed scroll-mt-24 scroll-mb-24"
                     >
                       {vSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
                       {!vSubmitting && vSuccess && <Check className="w-4 h-4 text-emerald-800" />}
@@ -802,48 +1071,160 @@ export const PropertyDetailPage: React.FC = () => {
                           : 'Book a site visit'}
                       </span>
                     </button>
+                    <div
+                      aria-hidden="true"
+                      className={visitKeyboardOpen ? 'h-[42dvh]' : 'hidden'}
+                    />
                   </>
                 )}
               </form>
             )}
 
             {interestedMode === 'question' && (
-              <form onSubmit={handleEnquirySubmit} className="space-y-3.5">
-                <input
-                  type="text"
-                  required
-                  aria-label="Your Name"
-                  placeholder="Your Full Name *"
-                  value={eName}
-                  onChange={(e) => setEName(e.target.value)}
-                  className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
-                />
-                <input
-                  type="tel"
-                  required
-                  aria-label="Phone Number"
-                  placeholder="Phone / WhatsApp *"
-                  value={ePhone}
-                  onChange={(e) => setEPhone(e.target.value)}
-                  className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
-                />
-                <input
-                  type="email"
-                  aria-label="Email Address"
-                  placeholder="Email Address (optional)"
-                  value={eEmail}
-                  onChange={(e) => setEEmail(e.target.value)}
-                  className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
-                />
-                <textarea
-                  rows={3}
-                  required
-                  aria-label="Your question"
-                  placeholder="Ask about price, floor plan, or paperwork..."
-                  value={eMsg}
-                  onChange={(e) => setEMsg(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
-                />
+              <form
+                ref={enquiryFormRef}
+                noValidate
+                onSubmit={handleEnquirySubmit}
+                className="space-y-3.5"
+              >
+                <div>
+                  <input
+                    id="enquiry-name"
+                    type="text"
+                    required
+                    autoComplete="name"
+                    aria-label="Your Name"
+                    aria-invalid={Boolean(eFieldErrors.name)}
+                    aria-describedby={eFieldErrors.name ? 'enquiry-name-error' : undefined}
+                    placeholder="Your Full Name *"
+                    value={eName}
+                    onChange={(e) => {
+                      setEName(e.target.value);
+                      if (eFieldErrors.name) {
+                        setEFieldErrors((prev) => ({ ...prev, name: undefined }));
+                      }
+                    }}
+                    className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24 ${
+                      eFieldErrors.name
+                        ? 'border-rose-500'
+                        : 'border-[var(--border-input)]'
+                    }`}
+                  />
+                  {eFieldErrors.name && (
+                    <p
+                      id="enquiry-name-error"
+                      role="alert"
+                      className="mt-1 text-[13px] text-rose-500"
+                    >
+                      {eFieldErrors.name}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <input
+                    id="enquiry-phone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    required
+                    aria-label="Phone Number"
+                    aria-invalid={Boolean(eFieldErrors.phone)}
+                    aria-describedby={
+                      eFieldErrors.phone ? 'enquiry-phone-error' : undefined
+                    }
+                    placeholder="Phone / WhatsApp *"
+                    value={ePhone}
+                    onChange={(e) => {
+                      setEPhone(e.target.value);
+                      if (eFieldErrors.phone) {
+                        setEFieldErrors((prev) => ({ ...prev, phone: undefined }));
+                      }
+                    }}
+                    className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors tabular-nums scroll-mt-24 scroll-mb-24 ${
+                      eFieldErrors.phone
+                        ? 'border-rose-500'
+                        : 'border-[var(--border-input)]'
+                    }`}
+                  />
+                  {eFieldErrors.phone && (
+                    <p
+                      id="enquiry-phone-error"
+                      role="alert"
+                      className="mt-1 text-[13px] text-rose-500"
+                    >
+                      {eFieldErrors.phone}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <input
+                    id="enquiry-email"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    aria-label="Email Address"
+                    aria-invalid={Boolean(eFieldErrors.email)}
+                    aria-describedby={
+                      eFieldErrors.email ? 'enquiry-email-error' : undefined
+                    }
+                    placeholder="Email Address (optional)"
+                    value={eEmail}
+                    onChange={(e) => {
+                      setEEmail(e.target.value);
+                      if (eFieldErrors.email) {
+                        setEFieldErrors((prev) => ({ ...prev, email: undefined }));
+                      }
+                    }}
+                    className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24 ${
+                      eFieldErrors.email
+                        ? 'border-rose-500'
+                        : 'border-[var(--border-input)]'
+                    }`}
+                  />
+                  {eFieldErrors.email && (
+                    <p
+                      id="enquiry-email-error"
+                      role="alert"
+                      className="mt-1 text-[13px] text-rose-500"
+                    >
+                      {eFieldErrors.email}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <textarea
+                    id="enquiry-message"
+                    rows={3}
+                    required
+                    aria-label="Your question"
+                    aria-invalid={Boolean(eFieldErrors.message)}
+                    aria-describedby={
+                      eFieldErrors.message ? 'enquiry-message-error' : undefined
+                    }
+                    placeholder="Ask about price, floor plan, or paperwork... *"
+                    value={eMsg}
+                    onChange={(e) => {
+                      setEMsg(e.target.value);
+                      if (eFieldErrors.message) {
+                        setEFieldErrors((prev) => ({ ...prev, message: undefined }));
+                      }
+                    }}
+                    className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24 ${
+                      eFieldErrors.message
+                        ? 'border-rose-500'
+                        : 'border-[var(--border-input)]'
+                    }`}
+                  />
+                  {eFieldErrors.message && (
+                    <p
+                      id="enquiry-message-error"
+                      role="alert"
+                      className="mt-1 text-[13px] text-rose-500"
+                    >
+                      {eFieldErrors.message}
+                    </p>
+                  )}
+                </div>
 
                 {eError && (
                   <p
@@ -864,7 +1245,7 @@ export const PropertyDetailPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={eSubmitting}
-                  className="btn-primary-lux w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                  className="btn-primary-lux w-full min-h-[48px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-base font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed scroll-mt-24 scroll-mb-24"
                 >
                   {eSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
                   {!eSubmitting && eSuccess && <Check className="w-4 h-4 text-emerald-800" />}
@@ -876,6 +1257,10 @@ export const PropertyDetailPage: React.FC = () => {
                       : 'Send question'}
                   </span>
                 </button>
+                <div
+                  aria-hidden="true"
+                  className={enquiryKeyboardOpen ? 'h-[42dvh]' : 'hidden'}
+                />
               </form>
             )}
 
@@ -960,11 +1345,30 @@ export const PropertyDetailPage: React.FC = () => {
 
             <motion.div
               onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => {
+                lightboxSwipeStartX.current = e.clientX;
+              }}
+              onPointerUp={(e) => {
+                if (lightboxSwipeStartX.current === null || images.length <= 1) {
+                  lightboxSwipeStartX.current = null;
+                  return;
+                }
+                const delta = e.clientX - lightboxSwipeStartX.current;
+                lightboxSwipeStartX.current = null;
+                if (delta > 40) {
+                  setActiveImageIdx((i) => (i - 1 + images.length) % images.length);
+                } else if (delta < -40) {
+                  setActiveImageIdx((i) => (i + 1) % images.length);
+                }
+              }}
+              onPointerCancel={() => {
+                lightboxSwipeStartX.current = null;
+              }}
               initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
               animate={prefersReduced ? { opacity: 1 } : { opacity: 1, scale: 1 }}
               exit={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
               transition={{ duration: 0.28, ease: LUX_EASE }}
-              className="relative z-10 max-w-5xl max-h-[85dvh] w-full flex flex-col items-center"
+              className="relative z-10 max-w-5xl max-h-[85dvh] w-full flex flex-col items-center touch-pan-y select-none"
             >
               <AnimatePresence mode="wait" initial={false}>
                 <motion.img
@@ -975,6 +1379,7 @@ export const PropertyDetailPage: React.FC = () => {
                     property.location,
                     activeImageIdx
                   )}
+                  draggable={false}
                   loading="lazy"
                   decoding="async"
                   referrerPolicy="no-referrer"
@@ -986,7 +1391,7 @@ export const PropertyDetailPage: React.FC = () => {
                 />
               </AnimatePresence>
               <p className="text-[13px] text-white/85 mt-3 tabular-nums">
-                Image {activeImageIdx + 1} of {images.length}
+                {activeImageIdx + 1}/{images.length}
               </p>
             </motion.div>
 
@@ -1006,6 +1411,39 @@ export const PropertyDetailPage: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Mobile Sticky Bottom Bar (replaces Call / WhatsApp bar on property details) */}
+      {!lightboxOpen &&
+        !authModalOpen &&
+        !navDrawerOpen &&
+        !firstVisitPromptOpen &&
+        !visitKeyboardOpen &&
+        !enquiryKeyboardOpen && (
+          <div
+            data-testid="property-sticky-bottom-bar"
+            className="md:hidden fixed inset-x-0 bottom-0 z-30 pb-[env(safe-area-inset-bottom,0px)] bg-[var(--bg-surface)]/95 border-t border-[var(--border-hairline)] backdrop-blur-xl shadow-[0_-8px_28px_-12px_rgba(0,0,0,0.22)]"
+          >
+            <div className="h-[56px] w-full pl-[max(0.875rem,env(safe-area-inset-left,0px))] pr-[max(0.875rem,env(safe-area-inset-right,0px))] flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-display text-lg font-semibold tabular-nums text-[var(--accent-primary)] truncate leading-tight">
+                  {formatINRReadable(
+                    property.price_inr,
+                    property.listing_type,
+                    property.price_unit
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleStickyBookVisit}
+                className="btn-primary-lux min-h-[44px] px-4 py-2 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center justify-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap"
+              >
+                <Calendar className="w-4 h-4 shrink-0" />
+                <span>Book a visit</span>
+              </button>
+            </div>
+          </div>
+        )}
     </main>
   );
 };

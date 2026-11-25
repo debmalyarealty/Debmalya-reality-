@@ -12,7 +12,7 @@ export const PropertyCardSkeleton: React.FC<PropertyCardSkeletonProps> = ({
       aria-hidden="true"
       className={`min-w-0 flex flex-col rounded-[clamp(1.25rem,3vw,1.75rem)] bg-[var(--bg-surface)] overflow-hidden shadow-[var(--shadow-subtle)] ${className}`}
     >
-      <div className="relative aspect-[4/3] sm:aspect-[4/5] bg-[var(--bg-surface-muted)] shimmer-skeleton" />
+      <div className="relative aspect-[4/5] bg-[var(--bg-surface-muted)] shimmer-skeleton" />
       <div className="flex-1 p-[clamp(1rem,2.8vw,1.75rem)] flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-3">
           <div className="h-7 w-28 rounded-full bg-[var(--bg-surface-muted)] shimmer-skeleton" />

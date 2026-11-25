@@ -51,7 +51,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
     <article
       className={`group property-card-container lux-card-hover tap-press min-w-0 flex flex-col rounded-[clamp(1.25rem,3vw,1.75rem)] bg-[var(--bg-surface)] overflow-hidden shadow-[var(--shadow-subtle)] ${className}`}
     >
-      <div className="relative aspect-[4/3] sm:aspect-[4/5] overflow-hidden bg-[var(--bg-surface-muted)]">
+      <div className="relative aspect-[4/5] overflow-hidden bg-[var(--bg-surface-muted)]">
         <Link
           to={detailPath}
           onClick={handleNavigate}
@@ -69,10 +69,17 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/72 via-black/28 to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/75 via-black/28 to-transparent" />
 
-        <div className="absolute top-3.5 left-3.5 right-3.5 flex items-center justify-between gap-2">
-          <span className="px-3.5 py-1.5 rounded-full bg-black/78 backdrop-blur-md text-[13px] font-medium text-white shadow-sm max-w-[calc(100%-3.5rem)] truncate">
-            {property.listing_type} &middot; {property.status}
-          </span>
+        <div className="absolute top-3.5 left-3.5 right-3.5 flex items-start justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-[calc(100%-3.25rem)]">
+            <span className="px-3 py-1 rounded-full bg-black/78 backdrop-blur-md text-[13px] font-medium text-white shadow-sm truncate max-w-full">
+              {property.listing_type} &middot; {property.status}
+            </span>
+            {property.is_featured && (
+              <span className="px-2.5 py-1 rounded-full bg-amber-500 text-slate-950 text-[12px] font-semibold shadow-sm whitespace-nowrap">
+                Featured
+              </span>
+            )}
+          </div>
 
           <FavoriteButton
             isFavorite={isFav}
@@ -95,20 +102,24 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
       <div className="flex-1 p-[clamp(1rem,2.8vw,1.75rem)] flex flex-col gap-3 min-w-0">
         <div className="property-card-header">
           <p className="font-display text-[clamp(1.375rem,2.4vw,1.875rem)] font-semibold tabular-nums text-[var(--accent-primary)] leading-none tracking-[-0.015em]">
-            {formatINRReadable(property.price_inr, property.listing_type)}
+            {formatINRReadable(
+              property.price_inr,
+              property.listing_type,
+              property.price_unit
+            )}
           </p>
           <span className="text-[13px] font-medium text-[var(--text-muted)] whitespace-nowrap">
             {property.property_type}
           </span>
         </div>
 
-        <h3 className="font-display text-[clamp(1.25rem,2vw,1.5rem)] font-medium leading-snug tracking-[-0.015em] text-[var(--text-primary)] truncate">
+        <h3 className="font-display text-[clamp(1.25rem,2vw,1.5rem)] font-medium leading-snug tracking-[-0.015em] text-[var(--text-primary)] min-w-0">
           <Link
             to={detailPath}
             onClick={handleNavigate}
-            className="hover:text-[var(--accent-primary)] transition-colors"
+            className="min-h-[44px] w-full flex items-center -my-2 hover:text-[var(--accent-primary)] transition-colors min-w-0"
           >
-            {property.title}
+            <span className="truncate">{property.title}</span>
           </Link>
         </h3>
 

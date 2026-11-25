@@ -250,7 +250,12 @@ export function buildPropertyMetaTags(
   const pathname = options.pathname || `/properties/${property.slug}`;
   const fallbackImage = settings?.hero_image_url || DEFAULT_OG_IMAGE_PATH;
 
-  const compactPrice = formatINR(property.price_inr, property.listing_type, true);
+  const compactPrice = formatINR(
+    property.price_inr,
+    property.listing_type,
+    true,
+    property.price_unit
+  );
   const actionLabel = property.listing_type === 'Rent' ? 'for rent' : 'for sale';
 
   // Keep <title> concise and branded while preserving readable property title

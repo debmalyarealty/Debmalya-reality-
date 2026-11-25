@@ -8,6 +8,7 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   Clock,
   Download,
@@ -20,6 +21,8 @@ import {
   Home,
   Loader2,
   LogOut,
+  Mail,
+  MapPin,
   MessageCircle,
   Moon,
   Phone,
@@ -43,6 +46,7 @@ import {
   ownerDeleteProperty,
   ownerDeleteReview,
   ownerDeleteTeamMember,
+  ownerMarkInquiryRead,
   ownerSaveProperty,
   ownerSaveSiteSettings,
   ownerSaveTeamMember,
@@ -51,6 +55,7 @@ import {
   ownerUpdateBooking,
   ownerUpdateInquiry,
   ownerUpdateReview,
+  sendPasswordResetEmail,
   uploadStorageImage,
   type OwnerDashboardData,
 } from '../lib/supabaseData';
@@ -64,12 +69,11 @@ import {
   SQFT_PER_KATHA,
   type AreaUnit,
 } from '../lib/realtyLogic';
-import { DEFAULT_SERVICES, DEFAULT_SITE_SETTINGS } from '../lib/demoData';
+import { DEFAULT_SERVICES } from '../lib/demoData';
 import {
   buildPropertyImageAlt,
   compressImageForUpload,
   formatFileSize,
-  makeItemFirst,
   MAX_PROPERTY_PHOTOS,
   reorderItems,
 } from '../lib/imageUtils';
@@ -78,6 +82,7 @@ import { LUX_EASE } from '../lib/motion';
 import { applyDocumentMeta, buildSiteMetaTags } from '../lib/metaTags';
 import { BackendNotice } from '../components/BackendNotice';
 import { BackButton } from '../components/BackButton';
+import { LeafletMapPicker } from '../components/LeafletMapPicker';
 import { PropertyImage } from '../components/PropertyImage';
 import type {
   Agent,
@@ -86,6 +91,7 @@ import type {
   Inquiry,
   InquiryStatus,
   OwnerDashboardStats,
+  PriceUnit,
   Property,
   PropertyStatus,
   Review,
@@ -93,7 +99,13 @@ import type {
   WebsiteSettings,
 } from '../types/realty';
 
-type OwnerTab = 'overview' | 'properties' | 'inquiries' | 'reviews' | 'settings';
+type OwnerTab =
+  | 'overview'
+  | 'properties'
+  | 'inquiries'
+  | 'reviews'
+  | 'clients'
+  | 'settings';
 type UnifiedEnquiryStatus = 'new' | 'contacted' | 'done';
 type PropertyWizardStep = 1 | 2 | 3 | 4;
 
@@ -124,6 +136,7 @@ const OWNER_TABS: {
     Icon: ClipboardList,
   },
   { key: 'reviews', label: 'Reviews', titleLabel: 'Reviews', Icon: Star },
+  { key: 'clients', label: 'Clients', titleLabel: 'Clients', Icon: Users },
   { key: 'settings', label: 'Settings', titleLabel: 'Settings', Icon: Settings },
 ];
 
@@ -142,11 +155,9 @@ const DEFAULT_AMENITY_OPTIONS = [
   'Intercom',
 ];
 
-const REVIEW_ASKED_STORAGE_KEY = 'dr_owner_review_asked';
-
 function mapRawTab(raw: string | null): OwnerTab {
   if (raw === 'bookings') return 'inquiries';
-  if (raw === 'team' || raw === 'clients') return 'settings';
+  if (raw === 'team') return 'settings';
   if (raw && OWNER_TABS.some((t) => t.key === raw)) {
     return raw as OwnerTab;
   }
@@ -220,7 +231,7 @@ function reviewStatusChipStyle(status: string): string {
 const SwitchControl: React.FC<{
   checked: boolean;
   onChange: (next: boolean) => void;
-  label: string;
+  label: React.ReactNode;
   disabled?: boolean;
 }> = ({ checked, onChange, label, disabled = false }) => (
   <button
@@ -284,6 +295,9 @@ export const OwnerDashboardPage: React.FC = () => {
   const [favoriteCounts, setFavoriteCounts] = useState<Record<string, number>>(
     initialCached?.favoriteCounts ?? {}
   );
+  const [savedByClientId, setSavedByClientId] = useState<
+    Record<string, string[]>
+  >(initialCached?.savedByClientId ?? {});
   const [inquiries, setInquiries] = useState<Inquiry[]>(
     initialCached?.inquiries ?? []
   );
@@ -304,22 +318,31 @@ export const OwnerDashboardPage: React.FC = () => {
   );
 
   // Filters & search
+  const [propFilter, setPropFilter] = useState<'all' | 'featured'>('all');
   const [enqFilter, setEnqFilter] = useState<'all' | UnifiedEnquiryStatus>('all');
   const [enqSearch, setEnqSearch] = useState('');
   const [revFilter, setRevFilter] = useState<
     'all' | 'pending' | 'approved' | 'rejected'
   >('all');
 
+  // Clients tab interaction state
+  const [expandedClientId, setExpandedClientId] = useState<string | null>(null);
+  const [detailClient, setDetailClient] = useState<UserProfile | null>(null);
+  const [resettingClientId, setResettingClientId] = useState<string | null>(
+    null
+  );
+  const [resetSentClientIds, setResetSentClientIds] = useState<
+    Record<string, boolean>
+  >({});
+
+  // Settings accordion state (Service photos)
+  const [openServicePhotoKey, setOpenServicePhotoKey] = useState<string | null>(
+    null
+  );
+
   // Quick copy feedback states
   const [reviewAskCopied, setReviewAskCopied] = useState(false);
   const [copiedPropId, setCopiedPropId] = useState<string | null>(null);
-  const [reviewAskedRecorded, setReviewAskedRecorded] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem(REVIEW_ASKED_STORAGE_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
 
   // Confirmation dialog
   const [confirmDialog, setConfirmDialog] = useState<ConfirmState | null>(null);
@@ -342,6 +365,7 @@ export const OwnerDashboardPage: React.FC = () => {
   const [pImages, setPImages] = useState<string[]>([]);
   const [pTitle, setPTitle] = useState('');
   const [pPrice, setPPrice] = useState('');
+  const [pPriceUnit, setPPriceUnit] = useState<PriceUnit>('total');
   const [pListingType, setPListingType] = useState<'' | 'Buy' | 'Rent'>('');
   const [pType, setPType] = useState('');
   const [pBeds, setPBeds] = useState('');
@@ -355,9 +379,12 @@ export const OwnerDashboardPage: React.FC = () => {
   const [showCustomAmenity, setShowCustomAmenity] = useState(false);
   const [pLocation, setPLocation] = useState('');
   const [pAddress, setPAddress] = useState('');
+  const [pLat, setPLat] = useState<number | null>(null);
+  const [pLng, setPLng] = useState<number | null>(null);
   const [pStatus, setPStatus] = useState<'' | PropertyStatus>('');
   const [pDesc, setPDesc] = useState('');
   const [pPublished, setPPublished] = useState(true);
+  const [pRecommended, setPRecommended] = useState(false);
   const [pFeatured, setPFeatured] = useState(false);
 
   const [uploadingImg, setUploadingImg] = useState(false);
@@ -456,6 +483,7 @@ export const OwnerDashboardPage: React.FC = () => {
     setStats(data.stats);
     setProperties(data.properties);
     setFavoriteCounts(data.favoriteCounts || {});
+    setSavedByClientId(data.savedByClientId || {});
     setInquiries(data.inquiries);
     setBookings(data.bookings);
     setReviews(data.reviews);
@@ -511,6 +539,7 @@ export const OwnerDashboardPage: React.FC = () => {
       propertySlug: undefined as string | undefined,
       message: item.message,
       note: item.owner_notes || '',
+      isRead: item.is_read !== false,
       unifiedStatus: inquiryToUnified(item.status),
     }));
 
@@ -527,11 +556,19 @@ export const OwnerDashboardPage: React.FC = () => {
       visitSchedule: `${item.preferred_date} at ${item.preferred_time}`,
       message: item.note,
       note: item.owner_note || '',
+      isRead: true,
       unifiedStatus: bookingToUnified(item.status),
     }));
 
     return [...enqItems, ...visitItems].sort((a, b) => b.sortTime - a.sortTime);
   }, [inquiries, bookings]);
+
+  const filteredProperties = useMemo(() => {
+    if (propFilter === 'featured') {
+      return properties.filter((p) => p.is_featured);
+    }
+    return properties;
+  }, [properties, propFilter]);
 
   const filteredCombinedEnquiries = useMemo(() => {
     const q = enqSearch.trim().toLowerCase();
@@ -549,6 +586,59 @@ export const OwnerDashboardPage: React.FC = () => {
     if (revFilter === 'all') return reviews;
     return reviews.filter((r) => r.status === revFilter);
   }, [reviews, revFilter]);
+
+  const propertyById = useMemo(() => {
+    const map = new Map<string, Property>();
+    for (const p of properties) {
+      map.set(p.id, p);
+    }
+    return map;
+  }, [properties]);
+
+  const clientActivityById = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        savedProperties: Property[];
+        bookings: Booking[];
+        inquiries: Inquiry[];
+        reviews: Review[];
+      }
+    > = {};
+
+    for (const c of clients) {
+      const cleanEmail = (c.email || '').trim().toLowerCase();
+      const savedIds = savedByClientId[c.id] || [];
+      const savedProperties = savedIds
+        .map((pid) => propertyById.get(pid))
+        .filter((p): p is Property => Boolean(p));
+
+      const clientBookings = bookings.filter(
+        (b) =>
+          b.user_id === c.id ||
+          (Boolean(cleanEmail) && (b.email || '').trim().toLowerCase() === cleanEmail)
+      );
+      const clientInquiries = inquiries.filter(
+        (i) =>
+          i.user_id === c.id ||
+          (Boolean(cleanEmail) && (i.email || '').trim().toLowerCase() === cleanEmail)
+      );
+      const clientReviews = reviews.filter(
+        (r) =>
+          r.user_id === c.id ||
+          (Boolean(cleanEmail) &&
+            (r.reviewer_email || '').trim().toLowerCase() === cleanEmail)
+      );
+
+      map[c.id] = {
+        savedProperties,
+        bookings: clientBookings,
+        inquiries: clientInquiries,
+        reviews: clientReviews,
+      };
+    }
+    return map;
+  }, [clients, savedByClientId, propertyById, bookings, inquiries, reviews]);
 
   if (authLoading) {
     return (
@@ -599,13 +689,6 @@ export const OwnerDashboardPage: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const scrollToSettingsSection = (sectionId: string) => {
-    switchOwnerTab('settings');
-    window.setTimeout(() => {
-      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
-    }, 120);
-  };
-
   const handleCopyReviewRequest = async () => {
     const link =
       siteSettings?.google_review_link?.trim() || `${siteOrigin}/#reviews`;
@@ -613,12 +696,6 @@ export const OwnerDashboardPage: React.FC = () => {
     try {
       await navigator.clipboard.writeText(msg);
       setReviewAskCopied(true);
-      setReviewAskedRecorded(true);
-      try {
-        window.localStorage.setItem(REVIEW_ASKED_STORAGE_KEY, '1');
-      } catch {
-        // ignore storage restrictions
-      }
       window.setTimeout(() => setReviewAskCopied(false), 3000);
       showToast(
         siteSettings?.google_review_link?.trim()
@@ -945,6 +1022,7 @@ export const OwnerDashboardPage: React.FC = () => {
     setPImages([]);
     setPTitle('');
     setPPrice('');
+    setPPriceUnit('total');
     setPListingType('');
     setPType('');
     setPBeds('');
@@ -958,9 +1036,12 @@ export const OwnerDashboardPage: React.FC = () => {
     setShowCustomAmenity(false);
     setPLocation('');
     setPAddress('');
+    setPLat(null);
+    setPLng(null);
     setPStatus('');
     setPDesc('');
     setPPublished(true);
+    setPRecommended(false);
     setPFeatured(false);
     setShowPropForm(true);
   };
@@ -975,6 +1056,9 @@ export const OwnerDashboardPage: React.FC = () => {
     setPImages(prop.images.map((i) => i.url));
     setPTitle(prop.title);
     setPPrice(String(prop.price_inr));
+    setPPriceUnit(
+      prop.price_unit ?? (prop.listing_type === 'Rent' ? 'night' : 'total')
+    );
     setPListingType(prop.listing_type);
     setPType(prop.property_type);
     setPBeds(prop.bedrooms ? String(prop.bedrooms) : '');
@@ -988,9 +1072,12 @@ export const OwnerDashboardPage: React.FC = () => {
     setShowCustomAmenity(false);
     setPLocation(prop.location);
     setPAddress(prop.address_detail || '');
+    setPLat(prop.latitude ?? null);
+    setPLng(prop.longitude ?? null);
     setPStatus(prop.status);
     setPDesc(prop.description);
     setPPublished(prop.is_published);
+    setPRecommended(prop.is_recommended ?? prop.is_featured);
     setPFeatured(prop.is_featured);
     setShowPropForm(true);
   };
@@ -1082,10 +1169,13 @@ export const OwnerDashboardPage: React.FC = () => {
         title: pTitle,
         description: pDesc,
         price_inr: Number(pPrice),
+        price_unit: pPriceUnit,
         listing_type: pListingType as 'Buy' | 'Rent',
         property_type: pType,
         location: pLocation,
         address_detail: pAddress,
+        latitude: pLat,
+        longitude: pLng,
         bedrooms: Number(pBeds || 0),
         bathrooms: Number(pBaths || 0),
         area_sqft: convertAreaInputToSqFt(pArea, pAreaUnit),
@@ -1094,6 +1184,7 @@ export const OwnerDashboardPage: React.FC = () => {
         status: pStatus as PropertyStatus,
         is_published: pPublished,
         is_featured: pFeatured,
+        is_recommended: pRecommended,
         amenities: pAmenities,
         images: pImages,
       });
@@ -1149,12 +1240,46 @@ export const OwnerDashboardPage: React.FC = () => {
     });
   };
 
+  const handleMarkEnquiryRead = async (id: string) => {
+    const target = inquiries.find((inq) => inq.id === id);
+    if (!target || target.is_read) return;
+
+    setInquiries((prev) =>
+      prev.map((inq) => (inq.id === id ? { ...inq, is_read: true } : inq))
+    );
+    setStats((prev) =>
+      prev
+        ? {
+            ...prev,
+            new_inquiries: Math.max(0, prev.new_inquiries - 1),
+          }
+        : prev
+    );
+
+    try {
+      await ownerMarkInquiryRead(id);
+    } catch {
+      // Keep UI responsive; next reload will reconcile
+    }
+  };
+
   const handleInquiryUpdate = async (
     id: string,
     status: InquiryStatus,
     notes: string
   ) => {
     try {
+      const target = inquiries.find((inq) => inq.id === id);
+      if (target && !target.is_read) {
+        setInquiries((prev) =>
+          prev.map((inq) => (inq.id === id ? { ...inq, is_read: true } : inq))
+        );
+        setStats((prev) =>
+          prev
+            ? { ...prev, new_inquiries: Math.max(0, prev.new_inquiries - 1) }
+            : prev
+        );
+      }
       await ownerUpdateInquiry(id, status, notes);
       showToast('Saved', 'saved');
       await loadAll(true);
@@ -1163,6 +1288,29 @@ export const OwnerDashboardPage: React.FC = () => {
         err instanceof Error ? err.message : 'Unable to update enquiry.',
         'error'
       );
+    }
+  };
+
+  const handleSendClientResetEmail = async (client: UserProfile) => {
+    const cleanEmail = (client.email || '').trim();
+    if (!cleanEmail) {
+      showToast('This client account does not have an email address.', 'error');
+      return;
+    }
+    setResettingClientId(client.id);
+    try {
+      await sendPasswordResetEmail(cleanEmail);
+      setResetSentClientIds((prev) => ({ ...prev, [client.id]: true }));
+      showToast(`Password reset email sent to ${cleanEmail}`, 'saved');
+    } catch (err) {
+      showToast(
+        err instanceof Error
+          ? err.message
+          : 'Unable to send password reset email right now.',
+        'error'
+      );
+    } finally {
+      setResettingClientId(null);
     }
   };
 
@@ -1348,124 +1496,9 @@ export const OwnerDashboardPage: React.FC = () => {
     properties: 0,
     inquiries: (stats?.new_inquiries || 0) + (stats?.pending_bookings || 0),
     reviews: stats?.pending_reviews || 0,
+    clients: 0,
     settings: 0,
   };
-
-  const attentionRows = [
-    {
-      count: stats?.new_inquiries || 0,
-      label:
-        (stats?.new_inquiries || 0) === 1
-          ? '1 new enquiry waiting for reply'
-          : `${stats?.new_inquiries || 0} new enquiries waiting for reply`,
-      onClick: () => {
-        setEnqFilter('new');
-        switchOwnerTab('inquiries');
-      },
-    },
-    {
-      count: stats?.pending_bookings || 0,
-      label:
-        (stats?.pending_bookings || 0) === 1
-          ? '1 pending site visit request'
-          : `${stats?.pending_bookings || 0} pending site visit requests`,
-      onClick: () => {
-        setEnqFilter('new');
-        switchOwnerTab('inquiries');
-      },
-    },
-    {
-      count: stats?.pending_reviews || 0,
-      label:
-        (stats?.pending_reviews || 0) === 1
-          ? '1 client review waiting for approval'
-          : `${stats?.pending_reviews || 0} client reviews waiting for approval`,
-      onClick: () => {
-        setRevFilter('pending');
-        switchOwnerTab('reviews');
-      },
-    },
-  ].filter((row) => row.count > 0);
-
-  const hasCustomHeroPhoto = Boolean(
-    siteSettings?.hero_image_url?.trim() &&
-      siteSettings.hero_image_url.trim() !==
-        DEFAULT_SITE_SETTINGS.hero_image_url
-  );
-  const hasTeamOrContact = Boolean(
-    agents.length > 0 ||
-      (siteSettings &&
-        (siteSettings.phone.trim() !== DEFAULT_SITE_SETTINGS.phone ||
-          siteSettings.whatsapp.trim() !== DEFAULT_SITE_SETTINGS.whatsapp ||
-          siteSettings.address.trim() !== DEFAULT_SITE_SETTINGS.address))
-  );
-  const hasAnySocialLink = Boolean(
-    siteSettings &&
-      (siteSettings.social_links.instagram.trim() ||
-        siteSettings.social_links.facebook.trim() ||
-        siteSettings.social_links.youtube.trim() ||
-        siteSettings.social_links.linkedin.trim())
-  );
-  const hasAskedReview = Boolean(
-    reviews.length > 0 ||
-      siteSettings?.google_review_link?.trim() ||
-      reviewAskedRecorded
-  );
-
-  const checklistItems = [
-    {
-      key: 'first-prop',
-      label: 'Add your first property',
-      done: properties.length >= 1,
-      actionLabel: 'Add now',
-      onClick: () => {
-        switchOwnerTab('properties');
-        openNewProperty();
-      },
-    },
-    {
-      key: 'five-props',
-      label: 'Add 5 properties',
-      done: properties.length >= 5,
-      actionLabel: `${Math.min(properties.length, 5)} / 5`,
-      onClick: () => {
-        switchOwnerTab('properties');
-        openNewProperty();
-      },
-    },
-    {
-      key: 'hero-photo',
-      label: 'Upload a hero photo',
-      done: hasCustomHeroPhoto,
-      actionLabel: 'Upload photo',
-      onClick: () => scrollToSettingsSection('settings-website-section'),
-    },
-    {
-      key: 'team-contact',
-      label: 'Add team or contact details',
-      done: hasTeamOrContact,
-      actionLabel: 'Open Settings',
-      onClick: () => scrollToSettingsSection('settings-contact-section'),
-    },
-    {
-      key: 'social-link',
-      label: 'Add a social link',
-      done: hasAnySocialLink,
-      actionLabel: 'Add link',
-      onClick: () => scrollToSettingsSection('settings-social-section'),
-    },
-    {
-      key: 'first-review',
-      label: 'Ask for your first review',
-      done: hasAskedReview,
-      actionLabel: 'Copy message',
-      onClick: () => {
-        void handleCopyReviewRequest();
-      },
-    },
-  ];
-  const checklistCompleted = checklistItems.filter((item) => item.done).length;
-  const showSetupChecklist = checklistCompleted < checklistItems.length;
 
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-x-clip">
@@ -1706,166 +1739,6 @@ export const OwnerDashboardPage: React.FC = () => {
                       ))}
                     </div>
 
-                    {/* Quick Actions */}
-                    <section
-                      aria-label="Quick actions"
-                      className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 shadow-[var(--shadow-subtle)] space-y-3"
-                    >
-                      <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-                        Quick actions
-                      </h2>
-                      <div className="flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            switchOwnerTab('properties');
-                            openNewProperty();
-                          }}
-                          className="btn-primary-lux min-h-[46px] px-5 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer"
-                        >
-                          <Plus className="w-4 h-4 shrink-0" />
-                          <span>Add property</span>
-                        </button>
-
-                        <a
-                          href={shareWebsiteWaHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="min-h-[46px] px-5 py-2.5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2"
-                        >
-                          <Share2 className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-                          <span>Share website on WhatsApp</span>
-                        </a>
-
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyReviewRequest()}
-                          className="min-h-[46px] px-5 py-2.5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer"
-                        >
-                          {reviewAskCopied ? (
-                            <Check className="w-4 h-4 text-emerald-500 shrink-0" />
-                          ) : (
-                            <Star className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-                          )}
-                          <span>
-                            {reviewAskCopied ? 'Message copied!' : 'Ask for a review'}
-                          </span>
-                        </button>
-                      </div>
-                    </section>
-
-                    {/* Needs Your Attention (only non-zero tappable rows) */}
-                    {attentionRows.length > 0 && (
-                      <section
-                        aria-label="Needs your attention"
-                        className="rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-surface)] p-5 sm:p-6 shadow-[var(--shadow-subtle)] space-y-3"
-                      >
-                        <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-                          Needs your attention
-                        </h2>
-                        <div className="divide-y divide-[var(--border-hairline)]">
-                          {attentionRows.map((row) => (
-                            <button
-                              key={row.label}
-                              type="button"
-                              onClick={row.onClick}
-                              className="w-full min-h-[52px] py-3 flex items-center justify-between gap-3 text-left hover:text-[var(--accent-primary)] transition-colors cursor-pointer group"
-                            >
-                              <span className="text-base font-medium text-[var(--text-primary)] group-hover:text-[var(--accent-primary)] break-anywhere">
-                                {row.label}
-                              </span>
-                              <span className="inline-flex items-center gap-2 shrink-0 text-[13px] font-semibold text-[var(--accent-primary)] tabular-nums">
-                                <span className="px-2.5 py-1 rounded-full bg-[var(--bg-surface-muted)]">
-                                  {row.count}
-                                </span>
-                                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </section>
-                    )}
-
-                    {/* Setup Checklist (hidden automatically once all 6 items are done) */}
-                    {showSetupChecklist && (
-                      <section
-                        aria-label="Setup checklist"
-                        className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 shadow-[var(--shadow-subtle)] space-y-4"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-                              Setup checklist
-                            </h2>
-                            <p className="text-sm text-[var(--text-secondary)] mt-0.5">
-                              Complete these steps to get the best response from your website.
-                            </p>
-                          </div>
-                          <span className="text-sm font-semibold text-[var(--accent-primary)] tabular-nums">
-                            {checklistCompleted} of {checklistItems.length} done
-                          </span>
-                        </div>
-
-                        <div
-                          role="progressbar"
-                          aria-label="Setup checklist progress"
-                          aria-valuemin={0}
-                          aria-valuemax={checklistItems.length}
-                          aria-valuenow={checklistCompleted}
-                          className="h-2.5 w-full rounded-full bg-[var(--bg-surface-muted)] overflow-hidden"
-                        >
-                          <div
-                            className="h-full rounded-full bg-[var(--cta-gold-bg)] transition-all duration-300"
-                            style={{
-                              width: `${Math.round(
-                                (checklistCompleted / checklistItems.length) * 100
-                              )}%`,
-                            }}
-                          />
-                        </div>
-
-                        <div className="divide-y divide-[var(--border-hairline)]">
-                          {checklistItems.map((item) => (
-                            <button
-                              key={item.key}
-                              type="button"
-                              onClick={item.onClick}
-                              className="w-full min-h-[48px] py-3 flex items-center justify-between gap-3 text-left cursor-pointer group"
-                            >
-                              <span className="inline-flex items-center gap-3 min-w-0">
-                                <span
-                                  aria-hidden="true"
-                                  className={`h-6 w-6 rounded-full border inline-flex items-center justify-center shrink-0 transition-colors ${
-                                    item.done
-                                      ? 'bg-emerald-600 border-emerald-600 text-white'
-                                      : 'border-[var(--border-input)] bg-[var(--bg-canvas)] text-transparent'
-                                  }`}
-                                >
-                                  <Check className="w-3.5 h-3.5" />
-                                </span>
-                                <span
-                                  className={`text-sm font-medium break-anywhere ${
-                                    item.done
-                                      ? 'line-through text-[var(--text-muted)]'
-                                      : 'text-[var(--text-primary)] group-hover:text-[var(--accent-primary)]'
-                                  }`}
-                                >
-                                  {item.label}
-                                </span>
-                              </span>
-
-                              {!item.done && (
-                                <span className="text-[13px] font-semibold text-[var(--accent-primary)] inline-flex items-center gap-1 shrink-0 whitespace-nowrap">
-                                  <span>{item.actionLabel}</span>
-                                  <ArrowRight className="w-3.5 h-3.5" />
-                                </span>
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      </section>
-                    )}
-
                     {/* Latest Enquiries Preview */}
                     <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 shadow-[var(--shadow-subtle)] space-y-4">
                       <div className="flex items-center justify-between gap-3">
@@ -1906,16 +1779,32 @@ export const OwnerDashboardPage: React.FC = () => {
                                 ? `Hello ${entry.name}, thank you for requesting a site visit for ${entry.subject} (${entry.visitSchedule || ''}). This is ${businessName}.`
                                 : `Hello ${entry.name}, thank you for contacting ${businessName} about ${entry.subject}.`
                             );
+                            const showUnread = entry.kind === 'enquiry' && !entry.isRead;
                             return (
                               <div
                                 key={`${entry.kind}-${entry.id}`}
-                                className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                                className={`rounded-xl border p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                                  showUnread
+                                    ? 'border-[var(--accent-primary)]/40 bg-[var(--bg-tint)]/35'
+                                    : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)]'
+                                }`}
                               >
                                 <div className="min-w-0 space-y-1">
                                   <div className="flex flex-wrap items-center gap-2">
+                                    {showUnread && (
+                                      <span
+                                        aria-label="Unread enquiry"
+                                        className="w-2.5 h-2.5 rounded-full bg-[var(--accent-primary)] shrink-0"
+                                      />
+                                    )}
                                     <p className="text-base font-semibold text-[var(--text-primary)] truncate">
                                       {entry.name}
                                     </p>
+                                    {showUnread && (
+                                      <span className="px-2 py-0.5 rounded-md bg-[var(--bg-tint)] text-[var(--accent-primary)] text-[12px] font-semibold shrink-0">
+                                        New
+                                      </span>
+                                    )}
                                     <span
                                       className={`px-2.5 py-0.5 rounded-full border text-[13px] font-semibold shrink-0 ${unifiedChipStyle(
                                         entry.unifiedStatus,
@@ -1935,6 +1824,18 @@ export const OwnerDashboardPage: React.FC = () => {
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                  {showUnread && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        void handleMarkEnquiryRead(entry.id);
+                                        switchOwnerTab('inquiries');
+                                      }}
+                                      className="min-h-[44px] px-3.5 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--bg-surface)] text-sm font-medium text-[var(--accent-primary)] inline-flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                      <span>Open</span>
+                                    </button>
+                                  )}
                                   {entry.phone && (
                                     <a
                                       href={`tel:${entry.phone.replace(/\s+/g, '')}`}
@@ -2068,6 +1969,10 @@ export const OwnerDashboardPage: React.FC = () => {
                             Cancel
                           </button>
                         </div>
+
+                        <p className="text-[13px] text-[var(--text-secondary)] rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5">
+                          Location, availability and description are required to publish.
+                        </p>
 
                         {/* Step Indicator */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -2332,19 +2237,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                         </button>
                                       </div>
 
-                                      {idx > 0 ? (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setPImages((prev) =>
-                                              makeItemFirst(prev, idx)
-                                            )
-                                          }
-                                          className="min-h-[44px] px-2.5 rounded-lg border border-[var(--border-hairline)] hover:border-[var(--accent-primary)] text-[13px] font-semibold text-[var(--accent-primary)] cursor-pointer whitespace-nowrap"
-                                        >
-                                          Make cover photo
-                                        </button>
-                                      ) : (
+                                      {idx === 0 && (
                                         <span className="text-[13px] font-medium text-[var(--text-muted)] pr-1">
                                           Main cover
                                         </span>
@@ -2438,9 +2331,18 @@ export const OwnerDashboardPage: React.FC = () => {
                                   aria-invalid={Boolean(propFieldErrors.listingType)}
                                   value={pListingType}
                                   onChange={(e) => {
-                                    setPListingType(
-                                      e.target.value as '' | 'Buy' | 'Rent'
-                                    );
+                                    const nextVal = e.target.value as
+                                      | ''
+                                      | 'Buy'
+                                      | 'Rent';
+                                    setPListingType(nextVal);
+                                    if (nextVal === 'Rent') {
+                                      setPPriceUnit((prev) =>
+                                        prev === 'month' ? 'month' : 'night'
+                                      );
+                                    } else if (nextVal === 'Buy') {
+                                      setPPriceUnit('total');
+                                    }
                                     clearPropFieldError('listingType');
                                   }}
                                   className={`w-full min-h-[46px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] ${
@@ -2456,6 +2358,52 @@ export const OwnerDashboardPage: React.FC = () => {
                                 {propFieldErrors.listingType && (
                                   <p className="mt-1.5 text-[13px] font-medium text-rose-500">
                                     {propFieldErrors.listingType}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <span className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                                  Price type
+                                </span>
+                                <div
+                                  role="group"
+                                  aria-label="Price type"
+                                  className="grid grid-cols-3 gap-2"
+                                >
+                                  {(
+                                    [
+                                      { id: 'total', label: 'Total price' },
+                                      { id: 'night', label: 'Per night' },
+                                      { id: 'month', label: 'Per month' },
+                                    ] as const
+                                  ).map((opt) => {
+                                    const active = pPriceUnit === opt.id;
+                                    return (
+                                      <button
+                                        key={opt.id}
+                                        type="button"
+                                        aria-pressed={active}
+                                        onClick={() => setPPriceUnit(opt.id)}
+                                        className={`min-h-[44px] px-3 py-2 rounded-xl border text-sm font-medium transition-colors cursor-pointer ${
+                                          active
+                                            ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] font-semibold'
+                                            : 'bg-[var(--bg-canvas)] border-[var(--border-hairline)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]'
+                                        }`}
+                                      >
+                                        {opt.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {Number(pPrice) > 0 && (
+                                  <p className="mt-1.5 text-[13px] font-medium text-[var(--accent-primary)] tabular-nums">
+                                    Preview:{' '}
+                                    {formatINRReadable(
+                                      Number(pPrice),
+                                      pListingType || 'Buy',
+                                      pPriceUnit
+                                    )}
                                   </p>
                                 )}
                               </div>
@@ -2578,7 +2526,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                           type="button"
                                           aria-pressed={active}
                                           onClick={() => setPAreaUnit(unit.id)}
-                                          className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                                          className={`min-h-[44px] px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                                             active
                                               ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
                                               : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -2803,20 +2751,34 @@ export const OwnerDashboardPage: React.FC = () => {
                                 )}
                               </div>
 
-                              <div className="sm:col-span-2">
-                                <label
-                                  htmlFor="prop-address"
-                                  className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5"
-                                >
-                                  Street address or landmark
-                                </label>
-                                <input
-                                  id="prop-address"
-                                  type="text"
-                                  placeholder="Optional landmark or road name"
-                                  value={pAddress}
-                                  onChange={(e) => setPAddress(e.target.value)}
-                                  className="w-full min-h-[46px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                              <div className="sm:col-span-2 space-y-3">
+                                <div>
+                                  <label
+                                    htmlFor="prop-address"
+                                    className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5"
+                                  >
+                                    Street address or landmark
+                                  </label>
+                                  <input
+                                    id="prop-address"
+                                    type="text"
+                                    placeholder="Optional landmark or road name"
+                                    value={pAddress}
+                                    onChange={(e) => setPAddress(e.target.value)}
+                                    className="w-full min-h-[46px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                                  />
+                                </div>
+
+                                <LeafletMapPicker
+                                  latitude={pLat}
+                                  longitude={pLng}
+                                  initialSearchHint={[pAddress, pLocation]
+                                    .filter(Boolean)
+                                    .join(', ')}
+                                  onChange={({ latitude, longitude }) => {
+                                    setPLat(latitude);
+                                    setPLng(longitude);
+                                  }}
                                 />
                               </div>
 
@@ -2851,17 +2813,35 @@ export const OwnerDashboardPage: React.FC = () => {
                               </div>
                             </div>
 
-                            <div className="flex flex-wrap items-center gap-6 pt-2 border-t border-[var(--border-hairline)]">
+                            <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-4 sm:gap-6 pt-3 border-t border-[var(--border-hairline)]">
                               <SwitchControl
                                 checked={pPublished}
                                 onChange={setPPublished}
                                 label="Visible on website"
                               />
-                              <SwitchControl
-                                checked={pFeatured}
-                                onChange={setPFeatured}
-                                label="Show in Recommended"
-                              />
+                              <div className="flex flex-col items-start gap-2">
+                                <SwitchControl
+                                  checked={pRecommended}
+                                  onChange={setPRecommended}
+                                  label="Show in Recommended"
+                                />
+                                <SwitchControl
+                                  checked={pFeatured}
+                                  onChange={setPFeatured}
+                                  label={
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <Star
+                                        className={`w-4 h-4 ${
+                                          pFeatured
+                                            ? 'fill-current text-[var(--accent-featured)]'
+                                            : 'text-[var(--text-muted)]'
+                                        }`}
+                                      />
+                                      <span>Featured property</span>
+                                    </span>
+                                  }
+                                />
+                              </div>
                             </div>
                           </div>
                         )}
@@ -2889,6 +2869,7 @@ export const OwnerDashboardPage: React.FC = () => {
 
                           {propStep < 4 ? (
                             <button
+                              key="wizard-next-btn"
                               type="button"
                               onClick={goNextPropertyStep}
                               className="min-h-[46px] px-6 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer"
@@ -2898,6 +2879,7 @@ export const OwnerDashboardPage: React.FC = () => {
                             </button>
                           ) : (
                             <button
+                              key="wizard-publish-btn"
                               type="submit"
                               disabled={savingProp}
                               className="min-h-[50px] px-8 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-base font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
@@ -2939,110 +2921,184 @@ export const OwnerDashboardPage: React.FC = () => {
                         </button>
                       </div>
                     ) : (
-                      <div className="space-y-3.5">
-                        {properties.map((prop) => {
-                          const savedCount = favoriteCounts[prop.id] || 0;
-                          const linkCopied = copiedPropId === prop.id;
-                          return (
-                            <div
-                              key={prop.id}
-                              className="lux-card-hover rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 sm:p-5 shadow-[var(--shadow-subtle)] space-y-4"
+                      <div className="space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div
+                            role="group"
+                            aria-label="Filter properties"
+                            className="inline-flex items-center p-1 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] gap-1"
+                          >
+                            <button
+                              type="button"
+                              aria-pressed={propFilter === 'all'}
+                              onClick={() => setPropFilter('all')}
+                              className={`min-h-[44px] px-4 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+                                propFilter === 'all'
+                                  ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
+                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                              }`}
                             >
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                                <div className="flex items-start sm:items-center gap-4 min-w-0">
-                                  <div className="w-24 sm:w-28 aspect-[4/3] rounded-xl overflow-hidden shrink-0 bg-[var(--bg-surface-muted)]">
-                                    <PropertyImage
-                                      src={prop.images[0]?.url}
-                                      alt={buildPropertyImageAlt(
-                                        prop.title,
-                                        prop.location
-                                      )}
-                                      className="w-full h-full object-cover"
-                                    />
+                              All ({properties.length})
+                            </button>
+                            <button
+                              type="button"
+                              aria-pressed={propFilter === 'featured'}
+                              onClick={() => setPropFilter('featured')}
+                              className={`min-h-[44px] px-4 rounded-lg text-sm font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                                propFilter === 'featured'
+                                  ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
+                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                              }`}
+                            >
+                              <Star
+                                className={`w-4 h-4 ${
+                                  propFilter === 'featured' ? 'fill-current' : ''
+                                }`}
+                              />
+                              <span>
+                                Featured ({properties.filter((p) => p.is_featured).length})
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {filteredProperties.length === 0 ? (
+                          <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 text-center space-y-3">
+                            <Star className="w-8 h-8 mx-auto text-[var(--accent-featured)] opacity-85" />
+                            <h2 className="font-display text-xl font-semibold text-[var(--text-primary)]">
+                              No featured properties yet
+                            </h2>
+                            <p className="text-sm text-[var(--text-secondary)] max-w-md mx-auto">
+                              Edit any listing and turn on &ldquo;Featured property&rdquo; to highlight it here and on your homepage.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setPropFilter('all')}
+                              className="min-h-[44px] px-5 rounded-xl border border-[var(--border-input)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                            >
+                              Show all properties
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-3.5">
+                            {filteredProperties.map((prop) => {
+                              const savedCount = favoriteCounts[prop.id] || 0;
+                              const linkCopied = copiedPropId === prop.id;
+                              return (
+                                <div
+                                  key={prop.id}
+                                  className="lux-card-hover rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 sm:p-5 shadow-[var(--shadow-subtle)] space-y-4"
+                                >
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                    <div className="flex items-start sm:items-center gap-4 min-w-0">
+                                      <div className="w-24 sm:w-28 aspect-[4/3] rounded-xl overflow-hidden shrink-0 bg-[var(--bg-surface-muted)]">
+                                        <PropertyImage
+                                          src={prop.images[0]?.url}
+                                          alt={buildPropertyImageAlt(
+                                            prop.title,
+                                            prop.location
+                                          )}
+                                          className="w-full h-full object-cover object-center"
+                                          sizes="112px"
+                                        />
+                                      </div>
+                                      <div className="min-w-0 space-y-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <h3 className="font-display text-xl font-semibold text-[var(--text-primary)] break-anywhere leading-snug">
+                                            {prop.title}
+                                          </h3>
+                                          {prop.is_featured && (
+                                            <span
+                                              title="Featured property"
+                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--accent-featured)] text-[var(--accent-featured-ink)] text-[12px] font-semibold shrink-0"
+                                            >
+                                              <Star className="w-3.5 h-3.5 fill-current" />
+                                              <span>Featured</span>
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-base font-semibold text-[var(--accent-primary)] tabular-nums">
+                                          {formatINRReadable(
+                                            prop.price_inr,
+                                            prop.listing_type,
+                                            prop.price_unit
+                                          )}
+                                        </p>
+                                        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-[var(--text-muted)]">
+                                          <span>
+                                            {prop.listing_type === 'Rent'
+                                              ? 'For rent'
+                                              : 'For sale'}
+                                          </span>
+                                          <span aria-hidden="true">&middot;</span>
+                                          <span>{prop.location}</span>
+                                          <span aria-hidden="true">&middot;</span>
+                                          <span>{prop.status}</span>
+                                          <span aria-hidden="true">&middot;</span>
+                                          <span className="inline-flex items-center gap-1 tabular-nums text-[var(--text-secondary)] font-medium">
+                                            <Heart className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                                            <span>
+                                              Saved {savedCount}{' '}
+                                              {savedCount === 1 ? 'time' : 'times'}
+                                            </span>
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="shrink-0">
+                                      <SwitchControl
+                                        checked={prop.is_published}
+                                        onChange={() => void togglePublish(prop)}
+                                        label="Visible on website"
+                                      />
+                                    </div>
                                   </div>
-                                  <div className="min-w-0 space-y-1">
-                                    <h3 className="font-display text-xl font-semibold text-[var(--text-primary)] break-anywhere leading-snug">
-                                      {prop.title}
-                                    </h3>
-                                    <p className="text-base font-semibold text-[var(--accent-primary)] tabular-nums">
-                                      {formatINRReadable(
-                                        prop.price_inr,
-                                        prop.listing_type
+
+                                  <div className="flex flex-wrap items-center justify-between gap-2.5 pt-3 border-t border-[var(--border-hairline)]">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void handleCopyPropertyShareLink(prop)
+                                      }
+                                      className="min-h-[44px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer"
+                                    >
+                                      {linkCopied ? (
+                                        <Check className="w-4 h-4 text-emerald-500" />
+                                      ) : (
+                                        <MessageCircle className="w-4 h-4 text-[var(--accent-primary)]" />
                                       )}
-                                    </p>
-                                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-[var(--text-muted)]">
                                       <span>
-                                        {prop.listing_type === 'Rent'
-                                          ? 'For rent'
-                                          : 'For sale'}
+                                        {linkCopied
+                                          ? 'Property link copied'
+                                          : 'Share on WhatsApp'}
                                       </span>
-                                      <span aria-hidden="true">&middot;</span>
-                                      <span>{prop.location}</span>
-                                      <span aria-hidden="true">&middot;</span>
-                                      <span>{prop.status}</span>
-                                      <span aria-hidden="true">&middot;</span>
-                                      <span className="inline-flex items-center gap-1 tabular-nums text-[var(--text-secondary)] font-medium">
-                                        <Heart className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                                        <span>
-                                          Saved {savedCount}{' '}
-                                          {savedCount === 1 ? 'time' : 'times'}
-                                        </span>
-                                      </span>
+                                    </button>
+
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => openEditProperty(prop)}
+                                        className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer"
+                                      >
+                                        <Edit3 className="w-4 h-4 text-[var(--accent-primary)]" />
+                                        <span>Edit</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => requestDeleteProperty(prop)}
+                                        className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-rose-500/50 text-[13px] font-medium text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                        <span>Delete</span>
+                                      </button>
                                     </div>
                                   </div>
                                 </div>
-
-                                <div className="shrink-0">
-                                  <SwitchControl
-                                    checked={prop.is_published}
-                                    onChange={() => void togglePublish(prop)}
-                                    label="Visible on website"
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="flex flex-wrap items-center justify-between gap-2.5 pt-3 border-t border-[var(--border-hairline)]">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void handleCopyPropertyShareLink(prop)
-                                  }
-                                  className="min-h-[44px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer"
-                                >
-                                  {linkCopied ? (
-                                    <Check className="w-4 h-4 text-emerald-500" />
-                                  ) : (
-                                    <MessageCircle className="w-4 h-4 text-[var(--accent-primary)]" />
-                                  )}
-                                  <span>
-                                    {linkCopied
-                                      ? 'Property link copied'
-                                      : 'Share on WhatsApp'}
-                                  </span>
-                                </button>
-
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditProperty(prop)}
-                                    className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer"
-                                  >
-                                    <Edit3 className="w-4 h-4 text-[var(--accent-primary)]" />
-                                    <span>Edit</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => requestDeleteProperty(prop)}
-                                    className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-rose-500/50 text-[13px] font-medium text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                    <span>Delete</span>
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -3164,8 +3220,14 @@ export const OwnerDashboardPage: React.FC = () => {
                               message={entry.message}
                               initialNote={entry.note}
                               status={entry.unifiedStatus}
+                              isUnread={!entry.isRead}
                               createdAt={entry.createdAt}
                               businessName={businessName}
+                              onOpen={() => {
+                                if (!entry.isRead) {
+                                  void handleMarkEnquiryRead(entry.id);
+                                }
+                              }}
                               onSave={async (nextStatus, nextNote) => {
                                 await handleInquiryUpdate(
                                   entry.id,
@@ -3187,6 +3249,7 @@ export const OwnerDashboardPage: React.FC = () => {
                               message={entry.message}
                               initialNote={entry.note}
                               status={entry.unifiedStatus}
+                              isUnread={false}
                               createdAt={entry.createdAt}
                               businessName={businessName}
                               onOpenPropertyLink={enterOwnerWebsiteView}
@@ -3428,7 +3491,7 @@ export const OwnerDashboardPage: React.FC = () => {
                         Settings
                       </h1>
                       <p className="text-sm text-[var(--text-secondary)] mt-0.5">
-                        Manage your contact info, website text and photos, team members, social links, review link, and clients.
+                        Manage your contact info, website text and photos, service photos, team members, social links, and Google review link.
                       </p>
                     </div>
 
@@ -3477,6 +3540,23 @@ export const OwnerDashboardPage: React.FC = () => {
                                 )
                               }
                               className="w-full min-h-[46px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                              Contact email
+                            </label>
+                            <input
+                              type="email"
+                              value={siteSettings.email || ''}
+                              onChange={(e) =>
+                                setSiteSettings((s) =>
+                                  s ? { ...s, email: e.target.value } : s
+                                )
+                              }
+                              placeholder="rounakdeysarkar90@gmail.com"
+                              className="w-full min-h-[46px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
                             />
                           </div>
 
@@ -4040,18 +4120,18 @@ export const OwnerDashboardPage: React.FC = () => {
                             })}
                           </div>
 
-                          {/* 6 Service photos */}
+                          {/* 6 Service photos (compact FAQ-style accordion) */}
                           <div className="space-y-3 pt-4 border-t border-[var(--border-hairline)]">
                             <div>
                               <h4 className="text-base font-semibold text-[var(--text-primary)]">
                                 Service photos (6 services)
                               </h4>
                               <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">
-                                Each service card shows its photo, or a coloured tile with an icon until you upload one.
+                                Expand any service to replace or remove its photo.
                               </p>
                             </div>
 
-                            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,230px),1fr))] gap-3.5">
+                            <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] divide-y divide-[var(--border-hairline)] overflow-hidden">
                               {DEFAULT_SERVICES.map((svc) => {
                                 const slotKey = `service:${svc.key}`;
                                 const photoUrl =
@@ -4059,112 +4139,143 @@ export const OwnerDashboardPage: React.FC = () => {
                                 const busy = Boolean(photoSlotBusy[slotKey]);
                                 const slotStats = photoSlotStats[slotKey];
                                 const errMsg = photoSlotError[slotKey];
+                                const isOpen = openServicePhotoKey === svc.key;
 
                                 return (
-                                  <div
-                                    key={svc.key}
-                                    className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-3.5 flex flex-col justify-between gap-2.5"
-                                  >
-                                    <div className="space-y-2">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="text-[13px] font-semibold text-[var(--text-primary)] truncate">
+                                  <div key={svc.key}>
+                                    <button
+                                      type="button"
+                                      aria-expanded={isOpen}
+                                      onClick={() =>
+                                        setOpenServicePhotoKey((prev) =>
+                                          prev === svc.key ? null : svc.key
+                                        )
+                                      }
+                                      className="w-full min-h-[48px] px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
+                                    >
+                                      <div className="min-w-0 flex flex-wrap items-center gap-2">
+                                        <span className="text-sm font-semibold text-[var(--text-primary)] truncate">
                                           {svc.title}
                                         </span>
-                                        {photoUrl && (
-                                          <button
-                                            type="button"
-                                            disabled={busy}
-                                            onClick={() =>
-                                              void handleRemoveWebsitePhoto(
-                                                slotKey,
-                                                (s) => ({
-                                                  ...s,
-                                                  service_images: {
-                                                    ...(s.service_images || {}),
-                                                    [svc.key]: '',
-                                                  },
-                                                })
-                                              )
-                                            }
-                                            className="min-h-[44px] px-2 text-[13px] text-rose-500 hover:underline cursor-pointer shrink-0 disabled:opacity-50"
-                                          >
-                                            Remove
-                                          </button>
+                                        <span className="text-[12px] text-[var(--text-muted)]">
+                                          {photoUrl ? 'Custom photo' : 'Coloured tile'}
+                                        </span>
+                                        {slotStats?.saved && (
+                                          <span className="text-[12px] font-semibold text-emerald-600 inline-flex items-center gap-1">
+                                            <Check className="w-3.5 h-3.5" />
+                                            Saved
+                                          </span>
                                         )}
                                       </div>
-
-                                      {photoUrl ? (
-                                        <div className="aspect-[16/9] rounded-lg overflow-hidden bg-[var(--bg-surface-muted)]">
-                                          <img
-                                            src={photoUrl}
-                                            alt={svc.title}
-                                            loading="lazy"
-                                            decoding="async"
-                                            className="w-full h-full object-cover"
-                                          />
-                                        </div>
-                                      ) : (
-                                        <div className="aspect-[16/9] rounded-lg border border-dashed border-[var(--border-hairline)] bg-[var(--bg-surface)] flex items-center justify-center text-[13px] text-[var(--text-muted)]">
-                                          Using coloured tile
-                                        </div>
-                                      )}
-                                    </div>
-
-                                    <div className="space-y-1.5">
-                                      <label
-                                        className={`min-h-[44px] w-full px-3 py-2 rounded-lg border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-surface)] text-[13px] font-semibold text-[var(--text-primary)] inline-flex items-center justify-center gap-1.5 transition-colors ${
-                                          busy ? 'opacity-60 cursor-wait' : 'cursor-pointer'
+                                      <ChevronDown
+                                        className={`w-4 h-4 text-[var(--text-muted)] shrink-0 transition-transform duration-200 ${
+                                          isOpen ? 'rotate-180' : ''
                                         }`}
-                                      >
-                                        {busy ? (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--accent-primary)]" />
+                                      />
+                                    </button>
+
+                                    {isOpen && (
+                                      <div className="px-4 pb-4 pt-1 space-y-3 bg-[var(--bg-surface)]/40 border-t border-[var(--border-hairline)]">
+                                        {photoUrl ? (
+                                          <div className="aspect-[16/9] max-w-xs rounded-lg overflow-hidden bg-[var(--bg-surface-muted)] border border-[var(--border-hairline)]">
+                                            <img
+                                              src={photoUrl}
+                                              alt={svc.title}
+                                              loading="lazy"
+                                              decoding="async"
+                                              className="w-full h-full object-cover"
+                                            />
+                                          </div>
                                         ) : (
-                                          <Upload className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                                          <p className="text-[13px] text-[var(--text-muted)]">
+                                            Using coloured icon tile until a photo is uploaded.
+                                          </p>
                                         )}
-                                        <span>{busy ? 'Saving...' : 'Replace'}</span>
-                                        <input
-                                          type="file"
-                                          disabled={busy}
-                                          accept="image/jpeg,image/png,image/webp,image/*"
-                                          className="hidden"
-                                          onChange={(e) => {
-                                            void handleReplaceWebsitePhoto(
-                                              slotKey,
-                                              e.target.files,
-                                              1200,
-                                              (s, url) => ({
-                                                ...s,
-                                                service_images: {
-                                                  ...(s.service_images || {}),
-                                                  [svc.key]: url,
-                                                },
-                                              })
-                                            );
-                                            e.currentTarget.value = '';
-                                          }}
-                                        />
-                                      </label>
 
-                                      {slotStats?.saved && (
-                                        <p className="text-[13px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1 break-anywhere">
-                                          <Check className="w-3.5 h-3.5 shrink-0" />
-                                          <span>
-                                            {formatFileSize(slotStats.before)} &rarr;{' '}
-                                            {formatFileSize(slotStats.after)} WebP · Saved
-                                          </span>
-                                        </p>
-                                      )}
+                                        <div className="flex flex-wrap items-center gap-2.5">
+                                          <label
+                                            className={`min-h-[44px] px-4 py-2 rounded-lg border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-surface)] text-[13px] font-semibold text-[var(--text-primary)] inline-flex items-center justify-center gap-1.5 transition-colors ${
+                                              busy
+                                                ? 'opacity-60 cursor-wait'
+                                                : 'cursor-pointer'
+                                            }`}
+                                          >
+                                            {busy ? (
+                                              <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--accent-primary)]" />
+                                            ) : (
+                                              <Upload className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                                            )}
+                                            <span>
+                                              {busy ? 'Saving...' : 'Replace'}
+                                            </span>
+                                            <input
+                                              type="file"
+                                              disabled={busy}
+                                              accept="image/jpeg,image/png,image/webp,image/*"
+                                              className="hidden"
+                                              onChange={(e) => {
+                                                void handleReplaceWebsitePhoto(
+                                                  slotKey,
+                                                  e.target.files,
+                                                  1200,
+                                                  (s, url) => ({
+                                                    ...s,
+                                                    service_images: {
+                                                      ...(s.service_images || {}),
+                                                      [svc.key]: url,
+                                                    },
+                                                  })
+                                                );
+                                                e.currentTarget.value = '';
+                                              }}
+                                            />
+                                          </label>
 
-                                      {errMsg && (
-                                        <p
-                                          role="alert"
-                                          className="text-[13px] font-medium text-rose-500 flex items-start gap-1 break-anywhere"
-                                        >
-                                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                                          <span>{errMsg}</span>
-                                        </p>
-                                      )}
-                                    </div>
+                                          {photoUrl && (
+                                            <button
+                                              type="button"
+                                              disabled={busy}
+                                              onClick={() =>
+                                                void handleRemoveWebsitePhoto(
+                                                  slotKey,
+                                                  (s) => ({
+                                                    ...s,
+                                                    service_images: {
+                                                      ...(s.service_images || {}),
+                                                      [svc.key]: '',
+                                                    },
+                                                  })
+                                                )
+                                              }
+                                              className="min-h-[44px] px-4 rounded-lg border border-[var(--border-hairline)] hover:border-rose-500/50 text-[13px] font-medium text-rose-500 cursor-pointer disabled:opacity-50"
+                                            >
+                                              Remove
+                                            </button>
+                                          )}
+                                        </div>
+
+                                        {slotStats?.saved && (
+                                          <p className="text-[13px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1 break-anywhere">
+                                            <Check className="w-3.5 h-3.5 shrink-0" />
+                                            <span>
+                                              {formatFileSize(slotStats.before)}{' '}
+                                              &rarr; {formatFileSize(slotStats.after)}{' '}
+                                              WebP · Saved
+                                            </span>
+                                          </p>
+                                        )}
+
+                                        {errMsg && (
+                                          <p
+                                            role="alert"
+                                            className="text-[13px] font-medium text-rose-500 flex items-start gap-1 break-anywhere"
+                                          >
+                                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                                            <span>{errMsg}</span>
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -4635,79 +4746,164 @@ export const OwnerDashboardPage: React.FC = () => {
                       </section>
                     )}
 
-                    {/* Section 6: Clients */}
-                    <section
-                      id="settings-clients-section"
-                      className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 shadow-[var(--shadow-subtle)] space-y-4"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-                            Clients ({clients.length})
-                          </h2>
-                          <p className="text-sm text-[var(--text-secondary)] mt-0.5">
-                            Visitors who have created an account on your website.
-                          </p>
-                        </div>
-                      </div>
+                  </div>
+                )}
 
-                      {clients.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-6 text-center space-y-3">
-                          <Users className="w-8 h-8 mx-auto text-[var(--accent-primary)] opacity-80" />
-                          <p className="text-sm text-[var(--text-secondary)] max-w-md mx-auto">
-                            No client accounts yet. When buyers or tenants create an account to save properties or book site visits, their details appear here.
-                          </p>
-                          <a
-                            href={shareWebsiteWaHref}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="min-h-[44px] px-5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2"
-                          >
-                            <Share2 className="w-4 h-4 text-[var(--accent-primary)]" />
-                            <span>Share website on WhatsApp</span>
-                          </a>
-                        </div>
-                      ) : (
-                        <div className="divide-y divide-[var(--border-hairline)]">
-                          {clients.map((c) => {
-                            const joinedText = formatReviewDate(c.created_at);
-                            return (
-                              <div
-                                key={c.id}
-                                className="py-3.5 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                              >
-                                <div className="min-w-0 space-y-0.5">
-                                  <p className="text-base font-semibold text-[var(--text-primary)] truncate">
-                                    {c.full_name || 'Client'}
-                                  </p>
-                                  <p className="text-[13px] text-[var(--text-secondary)] break-anywhere tabular-nums">
-                                    {c.phone || 'Phone not added'}
-                                    {c.city ? ` · ${c.city}` : ''}
-                                  </p>
+                {/* 5. CLIENTS TAB */}
+                {tab === 'clients' && (
+                  <div className="space-y-5">
+                    <div>
+                      <h1 className="font-display text-[clamp(1.75rem,4vw,2.35rem)] font-semibold text-[var(--text-primary)]">
+                        Clients ({clients.length})
+                      </h1>
+                      <p className="text-sm text-[var(--text-secondary)] mt-0.5">
+                        Registered client accounts, their saved properties, enquiries, visit requests, and reviews.
+                      </p>
+                    </div>
+
+                    {clients.length === 0 ? (
+                      <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 sm:p-10 shadow-[var(--shadow-subtle)] text-center space-y-4">
+                        <Users className="w-10 h-10 mx-auto text-[var(--accent-primary)] opacity-85" />
+                        <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
+                          No client accounts yet
+                        </h2>
+                        <p className="text-sm text-[var(--text-secondary)] max-w-md mx-auto">
+                          When buyers or tenants create an account on your website, they will appear here with their saved homes and requests.
+                        </p>
+                        <a
+                          href={shareWebsiteWaHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-primary-lux min-h-[46px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
+                        >
+                          <Share2 className="w-4 h-4" />
+                          <span>Share website on WhatsApp</span>
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {clients.map((c) => {
+                          const joinedText = formatReviewDate(c.created_at);
+                          const activity = clientActivityById[c.id] || {
+                            savedProperties: [],
+                            bookings: [],
+                            inquiries: [],
+                            reviews: [],
+                          };
+                          const isSelected = expandedClientId === c.id;
+                          return (
+                            <div
+                              key={c.id}
+                              onClick={() =>
+                                setExpandedClientId((prev) =>
+                                  prev === c.id ? null : c.id
+                                )
+                              }
+                              className={`rounded-2xl border p-4 sm:p-5 shadow-[var(--shadow-subtle)] transition-colors cursor-pointer space-y-3 ${
+                                isSelected
+                                  ? 'border-[var(--accent-primary)]/50 bg-[var(--bg-surface)]'
+                                  : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:border-[var(--border-strong)]'
+                              }`}
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div className="min-w-0 space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <h2 className="text-base sm:text-lg font-semibold text-[var(--text-primary)] break-anywhere">
+                                      {c.full_name || 'Client'}
+                                    </h2>
+                                    {joinedText && (
+                                      <span className="text-[12px] text-[var(--text-muted)] tabular-nums">
+                                        Joined {joinedText}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--text-secondary)]">
+                                    {c.email && (
+                                      <span className="inline-flex items-center gap-1 break-anywhere">
+                                        <Mail className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                                        <span>{c.email}</span>
+                                      </span>
+                                    )}
+                                    <span className="inline-flex items-center gap-1 tabular-nums">
+                                      <Phone className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                                      <span>{c.phone || 'Phone not added'}</span>
+                                    </span>
+                                    {c.city && (
+                                      <span className="inline-flex items-center gap-1">
+                                        <MapPin className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                                        <span>{c.city}</span>
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
 
-                                <div className="flex flex-wrap items-center gap-3 shrink-0">
+                                <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold tabular-nums shrink-0">
+                                  <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                                    {activity.savedProperties.length} saved
+                                  </span>
+                                  <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                                    {activity.inquiries.length} enquiries
+                                  </span>
+                                  <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                                    {activity.reviews.length} reviews
+                                  </span>
+                                </div>
+                              </div>
+
+                              {isSelected && (
+                                <div
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="pt-3 border-t border-[var(--border-hairline)] flex flex-wrap items-center gap-2.5"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => setDetailClient(c)}
+                                    className="btn-primary-lux min-h-[44px] px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <span>Details</span>
+                                    <ArrowRight className="w-4 h-4" />
+                                  </button>
+
+                                  {c.email && (
+                                    <button
+                                      type="button"
+                                      disabled={resettingClientId === c.id}
+                                      onClick={() =>
+                                        void handleSendClientResetEmail(c)
+                                      }
+                                      className="min-h-[44px] px-4 rounded-xl border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                                    >
+                                      {resettingClientId === c.id ? (
+                                        <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
+                                      ) : resetSentClientIds[c.id] ? (
+                                        <Check className="w-4 h-4 text-emerald-500" />
+                                      ) : (
+                                        <Mail className="w-4 h-4 text-[var(--accent-primary)]" />
+                                      )}
+                                      <span>
+                                        {resetSentClientIds[c.id]
+                                          ? 'Password reset email sent'
+                                          : 'Send password reset email'}
+                                      </span>
+                                    </button>
+                                  )}
+
                                   {c.phone && (
                                     <a
                                       href={`tel:${c.phone.replace(/\s+/g, '')}`}
-                                      className="min-h-[44px] px-4 rounded-full border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 tabular-nums"
+                                      className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 tabular-nums"
                                     >
-                                      <Phone className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                                      <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
                                       <span>Call</span>
                                     </a>
                                   )}
-                                  {joinedText && (
-                                    <span className="text-[13px] text-[var(--text-muted)] tabular-nums">
-                                      Joined {joinedText}
-                                    </span>
-                                  )}
                                 </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </section>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -4716,10 +4912,10 @@ export const OwnerDashboardPage: React.FC = () => {
         </div>
       </main>
 
-      {/* Mobile Fixed Bottom 5-Tab Bar (100% visible, zero sideways scroll) */}
+      {/* Mobile Fixed Bottom 6-Tab Bar (100% visible, zero sideways scroll) */}
       <nav
         aria-label="Owner mobile tabs"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-5 border-t border-[var(--border-hairline)] bg-[var(--bg-surface)]/96 backdrop-blur-2xl pb-[env(safe-area-inset-bottom,0px)] px-[env(safe-area-inset-left,0px)]"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-6 border-t border-[var(--border-hairline)] bg-[var(--bg-surface)]/96 backdrop-blur-2xl pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]"
       >
         {OWNER_TABS.map(({ key, label, Icon }) => {
           const active = tab === key;
@@ -4743,7 +4939,7 @@ export const OwnerDashboardPage: React.FC = () => {
                   </span>
                 )}
               </div>
-              <span className="text-[clamp(0.75rem,3vw,0.8125rem)] tracking-[-0.015em] leading-none truncate max-w-full">
+              <span className="text-[clamp(0.5625rem,2.4vw,0.75rem)] tracking-[-0.025em] leading-none whitespace-nowrap">
                 {label}
               </span>
             </button>
@@ -4766,7 +4962,7 @@ export const OwnerDashboardPage: React.FC = () => {
             onClick={() => {
               if (!confirmBusy) setConfirmDialog(null);
             }}
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))]"
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center pt-[max(1rem,env(safe-area-inset-top,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))] pl-[max(1rem,env(safe-area-inset-left,0px))]"
           >
             <motion.div
               key="confirm-dialog-card"
@@ -4834,6 +5030,275 @@ export const OwnerDashboardPage: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* Client Activity Details Modal */}
+      <AnimatePresence>
+        {detailClient && (
+          <motion.div
+            key="client-detail-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Activity for ${detailClient.full_name || 'Client'}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: LUX_EASE }}
+            onClick={() => setDetailClient(null)}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center pt-[max(1rem,env(safe-area-inset-top,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))] pl-[max(1rem,env(safe-area-inset-left,0px))]"
+          >
+            <motion.div
+              key="client-detail-card"
+              initial={
+                prefersReduced
+                  ? { opacity: 0 }
+                  : { opacity: 0, scale: 0.97, y: 12 }
+              }
+              animate={
+                prefersReduced ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }
+              }
+              exit={
+                prefersReduced
+                  ? { opacity: 0 }
+                  : { opacity: 0, scale: 0.97, y: 8 }
+              }
+              transition={{ duration: 0.22, ease: LUX_EASE }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-2xl max-h-[90dvh] overflow-y-auto rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-5 sm:p-6 space-y-5"
+            >
+              {(() => {
+                const activity = clientActivityById[detailClient.id] || {
+                  savedProperties: [],
+                  bookings: [],
+                  inquiries: [],
+                  reviews: [],
+                };
+                const joinedText = formatReviewDate(detailClient.created_at);
+                return (
+                  <>
+                    <div className="flex items-start justify-between gap-3 pb-4 border-b border-[var(--border-hairline)]">
+                      <div className="min-w-0 space-y-1">
+                        <h3 className="font-display text-2xl font-semibold text-[var(--text-primary)] break-anywhere">
+                          {detailClient.full_name || 'Client'}
+                        </h3>
+                        <p className="text-sm text-[var(--text-secondary)] break-anywhere">
+                          {detailClient.email || 'No email'}
+                          {detailClient.phone ? ` · ${detailClient.phone}` : ''}
+                          {detailClient.city ? ` · ${detailClient.city}` : ''}
+                        </p>
+                        {joinedText && (
+                          <p className="text-[13px] text-[var(--text-muted)] tabular-nums">
+                            Joined {joinedText}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailClient(null)}
+                        aria-label="Close client details"
+                        className="h-11 w-11 rounded-xl border border-[var(--border-hairline)] inline-flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      {detailClient.email && (
+                        <button
+                          type="button"
+                          disabled={resettingClientId === detailClient.id}
+                          onClick={() =>
+                            void handleSendClientResetEmail(detailClient)
+                          }
+                          className="min-h-[44px] px-4 rounded-xl border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                        >
+                          {resettingClientId === detailClient.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
+                          ) : resetSentClientIds[detailClient.id] ? (
+                            <Check className="w-4 h-4 text-emerald-500" />
+                          ) : (
+                            <Mail className="w-4 h-4 text-[var(--accent-primary)]" />
+                          )}
+                          <span>
+                            {resetSentClientIds[detailClient.id]
+                              ? 'Password reset email sent'
+                              : 'Send password reset email'}
+                          </span>
+                        </button>
+                      )}
+                      {detailClient.phone && (
+                        <a
+                          href={`tel:${detailClient.phone.replace(/\s+/g, '')}`}
+                          className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 tabular-nums"
+                        >
+                          <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
+                          <span>Call</span>
+                        </a>
+                      )}
+                    </div>
+
+                    {/* Saved properties */}
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                        Saved properties ({activity.savedProperties.length})
+                      </h4>
+                      {activity.savedProperties.length === 0 ? (
+                        <p className="text-sm text-[var(--text-muted)]">
+                          No saved properties yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {activity.savedProperties.map((prop) => (
+                            <div
+                              key={prop.id}
+                              className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5 flex items-center justify-between gap-3"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
+                                  {prop.title}
+                                </p>
+                                <p className="text-[13px] text-[var(--text-secondary)] truncate">
+                                  {prop.location} ·{' '}
+                                  {formatINRReadable(
+                                    prop.price_inr,
+                                    prop.listing_type,
+                                    prop.price_unit
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Site visit requests */}
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                        Site visit requests ({activity.bookings.length})
+                      </h4>
+                      {activity.bookings.length === 0 ? (
+                        <p className="text-sm text-[var(--text-muted)]">
+                          No site visit requests yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {activity.bookings.map((b) => (
+                            <div
+                              key={b.id}
+                              className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5 space-y-1"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-semibold text-[var(--text-primary)]">
+                                  {b.property_title}
+                                </p>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full border text-[12px] font-semibold ${unifiedChipStyle(
+                                    bookingToUnified(b.status),
+                                    true
+                                  )}`}
+                                >
+                                  {unifiedLabel(bookingToUnified(b.status))}
+                                </span>
+                              </div>
+                              <p className="text-[13px] text-[var(--text-secondary)] tabular-nums">
+                                {b.preferred_date} at {b.preferred_time}
+                              </p>
+                              {b.note && (
+                                <p className="text-[13px] text-[var(--text-muted)] break-anywhere">
+                                  {b.note}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Enquiries */}
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                        Enquiries ({activity.inquiries.length})
+                      </h4>
+                      {activity.inquiries.length === 0 ? (
+                        <p className="text-sm text-[var(--text-muted)]">
+                          No enquiries yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {activity.inquiries.map((inq) => (
+                            <div
+                              key={inq.id}
+                              className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5 space-y-1"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-semibold text-[var(--text-primary)]">
+                                  {inq.property_title || inq.interested_in}
+                                </p>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full border text-[12px] font-semibold ${unifiedChipStyle(
+                                    inquiryToUnified(inq.status),
+                                    true
+                                  )}`}
+                                >
+                                  {unifiedLabel(inquiryToUnified(inq.status))}
+                                </span>
+                              </div>
+                              {inq.message && (
+                                <p className="text-[13px] text-[var(--text-secondary)] break-anywhere">
+                                  {inq.message}
+                                </p>
+                              )}
+                              <p className="text-[12px] text-[var(--text-muted)] tabular-nums">
+                                {formatReviewDate(inq.created_at)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Reviews */}
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                        Reviews ({activity.reviews.length})
+                      </h4>
+                      {activity.reviews.length === 0 ? (
+                        <p className="text-sm text-[var(--text-muted)]">
+                          No reviews submitted yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {activity.reviews.map((rev) => (
+                            <div
+                              key={rev.id}
+                              className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5 space-y-1"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-semibold text-[var(--text-primary)] tabular-nums">
+                                  {rev.rating} / 5 stars · {rev.customer_type}
+                                </p>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full border text-[12px] font-semibold ${reviewStatusChipStyle(
+                                    rev.status
+                                  )}`}
+                                >
+                                  {rev.status}
+                                </span>
+                              </div>
+                              <p className="text-[13px] text-[var(--text-secondary)] break-anywhere">
+                                &ldquo;{rev.review_text}&rdquo;
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -4849,8 +5314,10 @@ const OwnerUnifiedEnquiryCard: React.FC<{
   message: string;
   initialNote: string;
   status: UnifiedEnquiryStatus;
+  isUnread?: boolean;
   createdAt: string;
   businessName: string;
+  onOpen?: () => void;
   onOpenPropertyLink?: () => void;
   onSave: (status: UnifiedEnquiryStatus, note: string) => Promise<void>;
 }> = ({
@@ -4864,8 +5331,10 @@ const OwnerUnifiedEnquiryCard: React.FC<{
   message,
   initialNote,
   status: initialStatus,
+  isUnread = false,
   createdAt,
   businessName,
+  onOpen,
   onOpenPropertyLink,
   onSave,
 }) => {
@@ -4873,6 +5342,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
   const [note, setNote] = useState(initialNote);
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [isOpen, setIsOpen] = useState(!isUnread);
 
   useEffect(() => {
     setStatus(initialStatus);
@@ -4894,11 +5364,37 @@ const OwnerUnifiedEnquiryCard: React.FC<{
       : `Namaste ${name}, thank you for your enquiry about ${subject}. This is ${businessName}. Would you like to schedule a call or visit?`
   );
 
+  const handleOpenCard = () => {
+    if (!isOpen) {
+      setIsOpen(true);
+      onOpen?.();
+    } else {
+      setIsOpen(false);
+    }
+  };
+
   return (
-    <div className="lux-card-hover rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-subtle)] space-y-4">
+    <div
+      className={`lux-card-hover rounded-2xl border p-5 shadow-[var(--shadow-subtle)] space-y-4 transition-colors ${
+        isUnread
+          ? 'border-[var(--accent-primary)]/45 bg-[var(--bg-surface)]'
+          : 'border-[var(--border-hairline)] bg-[var(--bg-surface)]'
+      }`}
+    >
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-        <div className="space-y-1 min-w-0">
+        <button
+          type="button"
+          onClick={handleOpenCard}
+          aria-expanded={isOpen}
+          className="space-y-1 min-w-0 flex-1 text-left cursor-pointer"
+        >
           <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--text-muted)]">
+            {isUnread && (
+              <span
+                aria-label="Unread enquiry"
+                className="w-2.5 h-2.5 rounded-full bg-[var(--accent-primary)] shrink-0"
+              />
+            )}
             <span className="inline-flex items-center gap-1 font-medium text-[var(--accent-primary)]">
               {type === 'visit' ? (
                 <Calendar className="w-3.5 h-3.5" />
@@ -4907,6 +5403,11 @@ const OwnerUnifiedEnquiryCard: React.FC<{
               )}
               <span>{type === 'visit' ? 'Site visit request' : 'Enquiry'}</span>
             </span>
+            {isUnread && (
+              <span className="px-2 py-0.5 rounded-md bg-[var(--bg-tint)] text-[var(--accent-primary)] text-[12px] font-semibold">
+                New
+              </span>
+            )}
             {relativeTime && (
               <>
                 <span aria-hidden="true">&middot;</span>
@@ -4921,22 +5422,19 @@ const OwnerUnifiedEnquiryCard: React.FC<{
             )}
           </div>
 
-          <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)] break-anywhere leading-snug">
-            {name}
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)] break-anywhere leading-snug">
+              {name}
+            </h2>
+            <ChevronDown
+              className={`w-4 h-4 text-[var(--text-muted)] shrink-0 transition-transform duration-200 ${
+                isOpen ? 'rotate-180' : ''
+              }`}
+            />
+          </div>
 
           <p className="text-sm text-[var(--text-secondary)] break-anywhere">
-            {propertySlug ? (
-              <Link
-                to={`/properties/${propertySlug}`}
-                onClick={onOpenPropertyLink}
-                className="hover:text-[var(--accent-primary)] underline-offset-2 hover:underline font-medium"
-              >
-                {subject}
-              </Link>
-            ) : (
-              <span className="font-medium">{subject}</span>
-            )}
+            <span className="font-medium">{subject}</span>
             {email ? ` · ${email}` : ''}
           </p>
 
@@ -4945,7 +5443,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
               Preferred visit: {visitSchedule}
             </p>
           )}
-        </div>
+        </button>
 
         {/* Colour-coded Status Chip Selector: New / Contacted / Done */}
         <div
@@ -4962,6 +5460,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
                 aria-pressed={active}
                 onClick={() => {
                   setStatus(st);
+                  setIsOpen(true);
                   void onSave(st, note);
                 }}
                 className={`min-h-[44px] px-3.5 rounded-full border text-[13px] font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${unifiedChipStyle(
@@ -4977,64 +5476,90 @@ const OwnerUnifiedEnquiryCard: React.FC<{
         </div>
       </div>
 
-      {message && (
-        <p className="text-sm sm:text-base text-[var(--text-primary)] leading-relaxed break-anywhere">
-          {message}
-        </p>
-      )}
-
-      {/* Big Call and WhatsApp Buttons */}
-      {(phone || waHref) && (
-        <div className="flex flex-wrap items-center gap-2.5">
-          {phone && (
-            <a
-              href={`tel:${phone.replace(/\s+/g, '')}`}
-              className="min-h-[46px] px-5 rounded-full border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-semibold text-[var(--text-primary)] inline-flex items-center gap-2 tabular-nums"
-            >
-              <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span>Call {phone}</span>
-            </a>
-          )}
-          {waHref && (
-            <a
-              href={waHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-primary-lux min-h-[46px] px-5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
-            >
-              <MessageCircle className="w-4 h-4" />
-              <span>WhatsApp</span>
-            </a>
-          )}
+      {!isOpen ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <button
+            type="button"
+            onClick={handleOpenCard}
+            className="min-h-[44px] px-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--bg-tint)]/30 text-sm font-semibold text-[var(--accent-primary)] inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <span>Open enquiry</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
         </div>
-      )}
+      ) : (
+        <>
+          {propertySlug && (
+            <Link
+              to={`/properties/${propertySlug}`}
+              onClick={onOpenPropertyLink}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-primary)] hover:underline"
+            >
+              <span>View property: {subject}</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          )}
 
-      {/* Private Note */}
-      <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-[var(--border-hairline)]">
-        <input
-          type="text"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="Add a note for yourself or the client..."
-          aria-label={`Note for ${name}`}
-          className="flex-1 min-h-[44px] px-3.5 py-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
-        />
-        <button
-          type="button"
-          disabled={saving}
-          onClick={async () => {
-            setSaving(true);
-            await onSave(status, note);
-            setSaving(false);
-            setJustSaved(true);
-            window.setTimeout(() => setJustSaved(false), 2500);
-          }}
-          className="min-h-[44px] px-4 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-        >
-          <Check className="w-4 h-4" />
-          <span>{justSaved ? 'Saved' : 'Save note'}</span>
-        </button>
-      </div>
+          {message && (
+            <p className="text-sm sm:text-base text-[var(--text-primary)] leading-relaxed break-anywhere">
+              {message}
+            </p>
+          )}
+
+          {/* Big Call and WhatsApp Buttons */}
+          {(phone || waHref) && (
+            <div className="flex flex-wrap items-center gap-2.5">
+              {phone && (
+                <a
+                  href={`tel:${phone.replace(/\s+/g, '')}`}
+                  className="min-h-[46px] px-5 rounded-full border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-semibold text-[var(--text-primary)] inline-flex items-center gap-2 tabular-nums"
+                >
+                  <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
+                  <span>Call {phone}</span>
+                </a>
+              )}
+              {waHref && (
+                <a
+                  href={waHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary-lux min-h-[46px] px-5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>WhatsApp</span>
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* Private Note */}
+          <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-[var(--border-hairline)]">
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Add a note for yourself or the client..."
+              aria-label={`Note for ${name}`}
+              className="flex-1 min-h-[44px] px-3.5 py-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+            />
+            <button
+              type="button"
+              disabled={saving}
+              onClick={async () => {
+                setSaving(true);
+                await onSave(status, note);
+                setSaving(false);
+                setJustSaved(true);
+                window.setTimeout(() => setJustSaved(false), 2500);
+              }}
+              className="min-h-[44px] px-4 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <Check className="w-4 h-4" />
+              <span>{justSaved ? 'Saved' : 'Save note'}</span>
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };

@@ -4,6 +4,7 @@ import {
   Facebook,
   Instagram,
   Linkedin,
+  Mail,
   MapPin,
   Phone,
   Youtube,
@@ -46,9 +47,11 @@ export const Footer: React.FC = () => {
       document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
     }, 120);
   };
+
   const businessName = settings?.business_name || 'Debmalya Realty';
-  const phone = settings?.phone || '+91 86498 58954';
-  const address =
+  const contactPhone = settings?.phone || '+91 86498 58954';
+  const contactEmail = settings?.email?.trim() || 'rounakdeysarkar90@gmail.com';
+  const contactAddress =
     settings?.address ||
     'Sevoke Road, Ward Number 13, Dasrath Pally, Bhanu Nagar, Siliguri, West Bengal 734001.';
   const social = settings?.social_links || {
@@ -75,30 +78,53 @@ export const Footer: React.FC = () => {
 
   return (
     <footer className="bg-[var(--bg-secondary)] text-[var(--text-secondary)]">
-      <div className="fluid-container pt-[clamp(3.75rem,7.5vw,6.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] md:pb-[clamp(3rem,5vw,4.5rem)] space-y-[clamp(2.5rem,5vw,4rem)]">
-        {/* Giant Architectural Brand Display */}
-        <div className="border-b border-[var(--border-hairline)] pb-[clamp(2rem,4vw,3.5rem)]">
-          <p className="font-display font-medium text-[clamp(2.25rem,8.5vw,7.5rem)] leading-[0.94] tracking-[-0.025em] text-[var(--text-primary)] select-none break-anywhere">
-            {businessName}
-          </p>
-          <p className="mt-5 text-base text-[var(--text-secondary)] fluid-prose">
-            {settings?.tagline ||
-              'High-End Builder & Property Consultant | Buy • Sell • Rent with Confidence.'}
-          </p>
+      <div className="fluid-container pt-[clamp(3.25rem,6.5vw,5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] md:pb-[clamp(3rem,5vw,4.5rem)] space-y-[clamp(2rem,4vw,3.25rem)]">
+        {/* Brand Name, Tagline & Contact Info from Settings */}
+        <div className="border-b border-[var(--border-hairline)] pb-[clamp(1.75rem,3.5vw,2.75rem)] space-y-5">
+          <div>
+            <p className="font-display font-medium text-[clamp(2.25rem,8vw,6.75rem)] leading-[0.96] tracking-[-0.025em] text-[var(--text-primary)] select-none break-anywhere">
+              {businessName}
+            </p>
+            <p className="mt-4 text-base text-[var(--text-secondary)] fluid-prose">
+              {settings?.tagline ||
+                'High-End Builder & Property Consultant | Buy • Sell • Rent with Confidence.'}
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-x-6 gap-y-2 text-sm text-[var(--text-secondary)]">
+            <a
+              href={`tel:${contactPhone.replace(/\s+/g, '')}`}
+              className="min-h-[44px] inline-flex items-center gap-2 hover:text-[var(--accent-primary)] tabular-nums"
+            >
+              <Phone className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+              <span>{contactPhone}</span>
+            </a>
+            <a
+              href={`mailto:${contactEmail}`}
+              className="min-h-[44px] inline-flex items-center gap-2 hover:text-[var(--accent-primary)] break-anywhere"
+            >
+              <Mail className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+              <span>{contactEmail}</span>
+            </a>
+            <span className="min-h-[44px] inline-flex items-center gap-2 break-anywhere">
+              <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+              <span>{contactAddress}</span>
+            </span>
+          </div>
         </div>
 
-        {/* Clean Minimal Navigation & Real Contact Columns */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-[clamp(1.75rem,4vw,3rem)]">
-          <div className="lg:col-span-3 min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-3">
+        {/* Explore Navigation & Social Icons */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2.5">
               Explore
             </h3>
-            <ul className="space-y-1 text-sm font-medium">
+            <ul className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm font-medium">
               <li>
                 <Link
                   to="/"
                   onClick={handlePublicNavigation}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
+                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)]"
                 >
                   Home
                 </Link>
@@ -107,7 +133,7 @@ export const Footer: React.FC = () => {
                 <Link
                   to="/properties"
                   onClick={handlePublicNavigation}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
+                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)]"
                 >
                   All properties
                 </Link>
@@ -116,7 +142,7 @@ export const Footer: React.FC = () => {
                 <Link
                   to="/#services"
                   onClick={(e) => handleSectionLink(e, 'services')}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
+                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)]"
                 >
                   Services
                 </Link>
@@ -125,7 +151,7 @@ export const Footer: React.FC = () => {
                 <Link
                   to="/#about"
                   onClick={(e) => handleSectionLink(e, 'about')}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
+                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)]"
                 >
                   About us
                 </Link>
@@ -134,16 +160,16 @@ export const Footer: React.FC = () => {
                 <Link
                   to="/#reviews"
                   onClick={(e) => handleSectionLink(e, 'reviews')}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
+                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)]"
                 >
-                  Client reviews
+                  Reviews
                 </Link>
               </li>
               <li>
                 <Link
                   to="/#contact"
                   onClick={(e) => handleSectionLink(e, 'contact')}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
+                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)]"
                 >
                   Contact
                 </Link>
@@ -151,109 +177,48 @@ export const Footer: React.FC = () => {
             </ul>
           </div>
 
-          <div className="lg:col-span-4 min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-3">
-              Siliguri portfolio
-            </h3>
-            <ul className="space-y-1 text-sm font-medium">
-              <li>
-                <Link
-                  to="/properties?type=Buy"
-                  onClick={handlePublicNavigation}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
+          {validSocials.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              {validSocials.map(({ name, url, Icon }) => (
+                <a
+                  key={name}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={name}
+                  className="h-11 w-11 inline-flex items-center justify-center rounded-full bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:text-[var(--accent-primary)]"
                 >
-                  Buy property in Siliguri
-                </Link>
-              </li>
-              <li>
-                <Link
-                  to="/properties?type=Rent"
-                  onClick={handlePublicNavigation}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
-                >
-                  Rental homes &amp; spaces
-                </Link>
-              </li>
-              <li>
-                <Link
-                  to="/properties?category=Flats%20%2F%20Apartments"
-                  onClick={handlePublicNavigation}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
-                >
-                  Flats &amp; apartments
-                </Link>
-              </li>
-              <li>
-                <Link
-                  to="/properties?category=Residential%20Plots"
-                  onClick={handlePublicNavigation}
-                  className="min-h-[44px] inline-flex items-center hover:text-[var(--accent-primary)] transition-colors"
-                >
-                  Residential plots &amp; land
-                </Link>
-              </li>
-            </ul>
-          </div>
-
-          <div className="lg:col-span-5 space-y-4 text-base min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-              Office &amp; direct contact
-            </h3>
-            <div className="flex items-start gap-2.5 text-sm font-medium text-[var(--text-secondary)]">
-              <MapPin className="w-4 h-4 mt-1 shrink-0 text-[var(--accent-primary)]" />
-              <span className="leading-relaxed break-anywhere">{address}</span>
+                  <Icon className="w-4 h-4" />
+                </a>
+              ))}
             </div>
-            <div className="flex items-center gap-2.5 text-base">
-              <Phone className="w-4 h-4 shrink-0 text-[var(--accent-primary)]" />
-              <a
-                href={`tel:${phone.replace(/\s+/g, '')}`}
-                className="min-h-[44px] inline-flex items-center tabular-nums font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] transition-colors"
-              >
-                {phone}
-              </a>
-            </div>
-            {validSocials.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                {validSocials.map(({ name, url, Icon }) => (
-                  <a
-                    key={name}
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={name}
-                    className="h-11 w-11 inline-flex items-center justify-center rounded-full bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:text-[var(--accent-primary)] transition-colors"
-                  >
-                    <Icon className="w-4 h-4" />
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
         </div>
 
-        <div className="pt-8 border-t border-[var(--border-hairline)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-[13px] font-medium text-[var(--text-muted)]">
-          <p className="text-[var(--text-secondary)]">
+        {/* Copyright & Legal */}
+        <div className="pt-6 border-t border-[var(--border-hairline)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-[13px] font-medium text-[var(--text-muted)]">
+          <p className="text-[var(--text-secondary)] break-anywhere max-w-full">
             &copy; {new Date().getFullYear()} {businessName}, Siliguri. All rights reserved.
           </p>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
             <Link
               to="/privacy-policy"
               onClick={handlePublicNavigation}
-              className="min-h-[44px] inline-flex items-center text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors"
+              className="min-h-[44px] inline-flex items-center text-[var(--text-secondary)] hover:text-[var(--accent-primary)]"
             >
               Privacy Policy
             </Link>
             <Link
               to="/terms"
               onClick={handlePublicNavigation}
-              className="min-h-[44px] inline-flex items-center text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors"
+              className="min-h-[44px] inline-flex items-center text-[var(--text-secondary)] hover:text-[var(--accent-primary)]"
             >
               Terms &amp; Conditions
             </Link>
             <Link
               to="/disclaimer"
               onClick={handlePublicNavigation}
-              className="min-h-[44px] inline-flex items-center text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors"
+              className="min-h-[44px] inline-flex items-center text-[var(--text-secondary)] hover:text-[var(--accent-primary)]"
             >
               Disclaimer
             </Link>

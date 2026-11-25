@@ -59,6 +59,20 @@ const OwnerRouteRedirect: React.FC = () => {
   return null;
 };
 
+const AuthRedirectObserver: React.FC = () => {
+  const { pendingAuthRedirect, clearPendingAuthRedirect } = useApp();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!pendingAuthRedirect) return;
+    const target = pendingAuthRedirect;
+    clearPendingAuthRedirect();
+    navigate(target, { replace: true });
+  }, [pendingAuthRedirect, clearPendingAuthRedirect, navigate]);
+
+  return null;
+};
+
 export default function App() {
   return (
     <AppProvider>
@@ -66,6 +80,7 @@ export default function App() {
         <ScrollToTop />
         <RouteHistoryTracker />
         <OwnerRouteRedirect />
+        <AuthRedirectObserver />
         <div className="min-h-screen flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)]">
           <Navbar />
           <div className="flex-1">

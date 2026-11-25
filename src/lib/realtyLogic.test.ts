@@ -15,11 +15,16 @@ import {
   formatRelativeTimeAgo,
   formatReviewDate,
   getPropertyGridSpanClass,
+  isValidEmail,
+  isValidPhone,
   savedSearchToFilters,
   slugify,
   SQFT_PER_KATHA,
+  validateAppointmentFields,
   validateAppointmentInput,
+  validateInquiryFields,
   validateInquiryInput,
+  validateReviewFields,
   validateReviewInput,
 } from './realtyLogic';
 import type { CustomerPreferences, Property, SavedSearch } from '../types/realty';
@@ -61,6 +66,9 @@ test('formatINRReadable formats readable Indian currency units for UI cards', ()
   assert.equal(formatINRReadable(6850000, 'Buy'), '₹68.5 Lakh');
   assert.equal(formatINRReadable(13500000, 'Buy'), '₹1.35 Cr');
   assert.equal(formatINRReadable(28000, 'Rent'), '₹28,000/mo');
+  assert.equal(formatINRReadable(3500, 'Rent', 'night'), '₹3,500 / night');
+  assert.equal(formatINRReadable(28000, 'Rent', 'month'), '₹28,000 / month');
+  assert.equal(formatINRReadable(6850000, 'Buy', 'total'), '₹68.5 Lakh');
   assert.equal(formatINRReadable(4400000, 'Buy'), '₹44 Lakh');
 });
 
@@ -154,22 +162,36 @@ test('computeRecommendations excludes Sold/Rented and ranks matching preferences
   assert.equal(doesPropertyMatchPreferences(list[0], prefs), false);
 });
 
-test('validation helpers reject invalid payloads and accept valid ones', () => {
-  assert.ok(
-    validateInquiryInput({
-      name: 'A',
-      phone: '123',
-      email: 'bad',
-      interested_in: '',
-      message: 'hi',
-    }) !== null
-  );
+test('validation helpers enforce Indian mobile numbers, valid emails, and required fields', () => {
+  assert.equal(isValidPhone('9832012345'), true);
+  assert.equal(isValidPhone('+91 98320 11223'), true);
+  assert.equal(isValidPhone('+91-6000012345'), true);
+  assert.equal(isValidPhone('7890123456'), true);
+  assert.equal(isValidPhone('8123456789'), true);
+  assert.equal(isValidPhone('5832012345'), false);
+  assert.equal(isValidPhone('1234567890'), false);
+  assert.equal(isValidPhone('983201234'), false);
+  assert.equal(isValidPhone('919832012345'), false);
+  assert.equal(isValidEmail('buyer@example.com'), true);
+  assert.equal(isValidEmail('bad-email'), false);
+
+  const inqErrs = validateInquiryFields({
+    name: 'A',
+    phone: '5123456789',
+    email: 'bad',
+    interested_in: '',
+    message: 'hi',
+  });
+  assert.ok(inqErrs.fields.name);
+  assert.equal(inqErrs.fields.phone, 'Enter a 10-digit mobile number.');
+  assert.ok(inqErrs.fields.email);
+  assert.ok(inqErrs.fields.message);
 
   assert.equal(
     validateInquiryInput({
       name: 'Anirban Sen',
       phone: '+91 98320 11223',
-      email: 'anirban@example.com',
+      email: '',
       interested_in: 'Property Buying',
       message: 'Interested in visiting properties near Sevoke Road.',
     }),
@@ -180,7 +202,7 @@ test('validation helpers reject invalid payloads and accept valid ones', () => {
     validateAppointmentInput({
       customer_name: 'Riya Das',
       phone: '9832012345',
-      email: 'riya@example.com',
+      email: '',
       property_id: 'p1',
       preferred_date: '2026-12-01',
       preferred_time: '11:00 AM',
@@ -188,13 +210,28 @@ test('validation helpers reject invalid payloads and accept valid ones', () => {
     null
   );
 
-  assert.ok(
-    validateReviewInput({
-      reviewer_name: 'Riya Das',
-      rating: 6,
-      review_text: 'Short',
-    }) !== null
-  );
+  const apptErrs = validateAppointmentFields({
+    customer_name: 'R',
+    phone: '1234567890',
+    email: 'wrong@',
+    property_id: 'p1',
+    preferred_date: '',
+    preferred_time: '11:00 AM',
+  });
+  assert.ok(apptErrs.fields.customer_name);
+  assert.equal(apptErrs.fields.phone, 'Enter a 10-digit mobile number.');
+  assert.ok(apptErrs.fields.email);
+  assert.ok(apptErrs.fields.preferred_date);
+
+  const revErrs = validateReviewFields({
+    reviewer_name: '',
+    reviewer_email: 'not-email',
+    rating: 5,
+    review_text: 'Short',
+  });
+  assert.ok(revErrs.fields.reviewer_name);
+  assert.ok(revErrs.fields.reviewer_email);
+  assert.ok(revErrs.fields.review_text);
 });
 
 test('getPropertyGridSpanClass balances tablet and desktop rows without orphan cards', () => {

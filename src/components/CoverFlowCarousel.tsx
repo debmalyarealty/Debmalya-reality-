@@ -1,13 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MapPin } from 'lucide-react';
-import { useApp } from '../context/AppContext';
+import { AnimatePresence, motion } from 'motion/react';
 import { formatINRReadable } from '../lib/realtyLogic';
 import { buildPropertyImageAlt } from '../lib/imageUtils';
-import { navigateWithTransition } from '../lib/motion';
+import { LUX_EASE, navigateWithTransition } from '../lib/motion';
 import type { Property } from '../types/realty';
 import { PropertyImage } from './PropertyImage';
-import { FavoriteButton } from './FavoriteButton';
 
 interface CoverFlowCarouselProps {
   properties: Property[];
@@ -20,20 +19,21 @@ interface CoverFlowCarouselProps {
 
 export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
   properties,
-  title = 'Recommended Properties',
+  title = 'Recommended properties',
   subtitle,
   eyebrow,
   actionSlot,
-  reasonsById,
 }) => {
-  const { favoriteIds, toggleFavorite } = useApp();
   const navigate = useNavigate();
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [prefersReduced, setPrefersReduced] = useState(false);
   const [dragOffsetPx, setDragOffsetPx] = useState(0);
+  const [revealedPropId, setRevealedPropId] = useState<string | null>(null);
   const dragStartX = useRef<number | null>(null);
+  const dragMovedRef = useRef(false);
   const interactionTimeout = useRef<number | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
 
   const count = properties.length;
 
@@ -60,6 +60,26 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
     };
   }, []);
 
+  // Hide the revealed Details button when tapping anywhere outside the active photo/details wrapper
+  useEffect(() => {
+    if (!revealedPropId) return;
+    const onDocPointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) {
+        setRevealedPropId(null);
+        return;
+      }
+      const insideRevealed = target.closest(
+        `[data-coverflow-interactive="${revealedPropId}"]`
+      );
+      if (!insideRevealed) {
+        setRevealedPropId(null);
+      }
+    };
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, [revealedPropId]);
+
   const pauseBriefly = useCallback(() => {
     setIsPaused(true);
     if (interactionTimeout.current) {
@@ -72,18 +92,20 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
 
   const goPrev = useCallback(() => {
     if (count <= 1) return;
+    setRevealedPropId(null);
     pauseBriefly();
     setActiveIndex((prev) => (prev - 1 + count) % count);
   }, [count, pauseBriefly]);
 
   const goNext = useCallback(() => {
     if (count <= 1) return;
+    setRevealedPropId(null);
     pauseBriefly();
     setActiveIndex((prev) => (prev + 1) % count);
   }, [count, pauseBriefly]);
 
   useEffect(() => {
-    if (count <= 1 || isPaused || prefersReduced) return;
+    if (count <= 1 || isPaused || prefersReduced || revealedPropId !== null) return;
 
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -92,7 +114,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
     }, 5200);
 
     return () => window.clearInterval(timer);
-  }, [count, isPaused, prefersReduced]);
+  }, [count, isPaused, prefersReduced, revealedPropId]);
 
   if (count === 0) return null;
 
@@ -103,20 +125,71 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
     return diff;
   };
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const x = e.touches[0]?.clientX;
+    if (typeof x === 'number') {
+      dragStartX.current = x;
+      dragMovedRef.current = false;
+    }
+    setIsPaused(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (dragStartX.current === null) return;
+    const x = e.touches[0]?.clientX;
+    if (typeof x !== 'number') return;
+    const raw = x - dragStartX.current;
+    if (Math.abs(raw) > 10) {
+      dragMovedRef.current = true;
+    }
+    if (!prefersReduced) {
+      setDragOffsetPx(Math.max(-64, Math.min(64, raw * 0.35)));
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (dragStartX.current === null) return;
+    const endX = e.changedTouches[0]?.clientX;
+    const startX = dragStartX.current;
+    dragStartX.current = null;
+    setDragOffsetPx(0);
+    if (typeof endX === 'number') {
+      const delta = endX - startX;
+      if (delta > 42) {
+        goPrev();
+      } else if (delta < -42) {
+        goNext();
+      } else {
+        pauseBriefly();
+      }
+    } else {
+      pauseBriefly();
+    }
+    window.setTimeout(() => {
+      dragMovedRef.current = false;
+    }, 80);
+  };
+
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') return;
     dragStartX.current = e.clientX;
+    dragMovedRef.current = false;
     setIsPaused(true);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (dragStartX.current === null || prefersReduced) return;
+    if (e.pointerType === 'touch' || dragStartX.current === null) return;
     const raw = e.clientX - dragStartX.current;
-    // Soft rubber-band damping for responsive inertia under finger/mouse
-    setDragOffsetPx(Math.max(-64, Math.min(64, raw * 0.35)));
+    if (Math.abs(raw) > 10) {
+      dragMovedRef.current = true;
+    }
+    if (!prefersReduced) {
+      setDragOffsetPx(Math.max(-64, Math.min(64, raw * 0.35)));
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    if (dragStartX.current === null) return;
+    if (e.pointerType === 'touch' || dragStartX.current === null) return;
     const delta = e.clientX - dragStartX.current;
     dragStartX.current = null;
     setDragOffsetPx(0);
@@ -127,6 +200,9 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
     } else {
       pauseBriefly();
     }
+    window.setTimeout(() => {
+      dragMovedRef.current = false;
+    }, 80);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -141,7 +217,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
 
   return (
     <div
-      className="space-y-10"
+      className="space-y-6 sm:space-y-8 min-w-0 overflow-hidden"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
       onFocusCapture={() => setIsPaused(true)}
@@ -152,32 +228,32 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
       aria-roledescription="carousel"
       aria-label={title}
     >
-      <div className="relative z-20 flex flex-col sm:flex-row sm:items-end justify-between gap-6">
-        <div className="space-y-2">
+      <div className="relative z-20 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div className="space-y-1.5 min-w-0">
           {eyebrow && (
             <p className="text-sm font-medium text-[var(--accent-primary)]">
               {eyebrow}
             </p>
           )}
-          <h2 className="font-display text-[clamp(2rem,4.5vw,3.5rem)] font-medium text-[var(--text-primary)] tracking-[-0.02em] leading-[1.06]">
+          <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.125rem)] font-medium text-[var(--text-primary)] tracking-[-0.015em] leading-[1.15] break-anywhere">
             {title}
           </h2>
           {subtitle && (
-            <p className="text-base text-[var(--text-secondary)] fluid-prose leading-relaxed">
+            <p className="text-sm sm:text-base text-[var(--text-secondary)] fluid-prose leading-relaxed">
               {subtitle}
             </p>
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 shrink-0">
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
           {actionSlot}
           {count > 1 && (
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={goPrev}
                 aria-label="Previous recommended property"
-                className="h-11 w-11 inline-flex items-center justify-center rounded-full bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--cta-gold-bg)] hover:border-[var(--cta-gold-bg)] hover:text-[var(--cta-gold-ink)] transition-colors cursor-pointer"
+                className="tap-press h-11 w-11 inline-flex items-center justify-center rounded-full bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--cta-gold-bg)] hover:border-[var(--cta-gold-bg)] hover:text-[var(--cta-gold-ink)] cursor-pointer"
               >
                 <ArrowLeft className="w-4 h-4" />
               </button>
@@ -185,7 +261,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
                 type="button"
                 onClick={goNext}
                 aria-label="Next recommended property"
-                className="h-11 w-11 inline-flex items-center justify-center rounded-full bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--cta-gold-bg)] hover:border-[var(--cta-gold-bg)] hover:text-[var(--cta-gold-ink)] transition-colors cursor-pointer"
+                className="tap-press h-11 w-11 inline-flex items-center justify-center rounded-full bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--cta-gold-bg)] hover:border-[var(--cta-gold-bg)] hover:text-[var(--cta-gold-ink)] cursor-pointer"
               >
                 <ArrowRight className="w-4 h-4" />
               </button>
@@ -196,7 +272,13 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
 
       {/* 3D Cover Flow Stage */}
       <div
-        className="relative h-[clamp(360px,54vw,510px)] w-full overflow-hidden select-none touch-pan-y"
+        ref={stageRef}
+        data-testid="recommended-coverflow-stage"
+        className="relative h-[400px] sm:h-[465px] lg:h-[490px] w-full overflow-hidden select-none touch-pan-y"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -214,6 +296,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
             if (absOffset > maxVisibleOffset) return null;
 
             const isCenter = offset === 0;
+            const isRevealed = isCenter && revealedPropId === prop.id;
             const translateX =
               offset === 0
                 ? 0
@@ -238,12 +321,19 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
               ? 32
               : -32;
             const zIndex = 30 - absOffset * 10;
-            const opacity = isCenter ? 1 : absOffset === 1 ? 0.72 : 0.32;
-            const isFav = favoriteIds.includes(prop.id);
+            const opacity = isCenter ? 1 : absOffset === 1 ? 0.74 : 0.34;
             const locText = prop.location.toLowerCase().includes('siliguri')
               ? prop.location
               : `${prop.location}, Siliguri`;
-            const reasons = reasonsById?.[prop.id];
+            const detailSummary = [
+              prop.property_type,
+              prop.bedrooms > 0 ? `${prop.bedrooms} BHK` : null,
+              prop.area_sqft > 0
+                ? `${prop.area_sqft.toLocaleString('en-IN')} sq ft`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' · ');
 
             return (
               <div
@@ -257,102 +347,120 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
                       ? 'none'
                       : prefersReduced
                       ? 'opacity 200ms ease'
-                      : 'transform 680ms cubic-bezier(0.22, 1, 0.36, 1), opacity 520ms ease, box-shadow 520ms ease',
+                      : 'transform 620ms cubic-bezier(0.22, 1, 0.36, 1), opacity 460ms ease',
                 }}
                 onClick={() => {
-                  if (!isCenter) {
+                  if (!isCenter && !dragMovedRef.current) {
+                    setRevealedPropId(null);
                     pauseBriefly();
                     setActiveIndex(idx);
                   }
                 }}
-                className={`absolute w-[min(88%,440px)] sm:w-[68%] lg:w-[54%] h-[clamp(330px,50vw,470px)] rounded-[clamp(1.25rem,3vw,1.75rem)] overflow-hidden bg-[var(--bg-surface)] ${
+                className={`absolute w-[min(88%,400px)] sm:w-[64%] lg:w-[48%] flex flex-col rounded-[clamp(1.25rem,3vw,1.75rem)] overflow-hidden bg-[var(--bg-surface)] border border-[var(--border-hairline)] ${
                   isCenter
-                    ? 'cursor-default shadow-[var(--shadow-elevated)]'
+                    ? 'shadow-[var(--shadow-elevated)]'
                     : 'cursor-pointer shadow-[var(--shadow-subtle)]'
                 } ${absOffset === 2 ? 'hidden md:block' : ''}`}
               >
-                <PropertyImage
-                  src={prop.images[0]?.url}
-                  alt={buildPropertyImageAlt(prop.title, prop.location)}
-                  className="w-full h-full object-cover object-center"
-                  sizes="(max-width: 640px) 88vw, (max-width: 1024px) 68vw, 54vw"
-                />
-
-                {/* Soft vignette over non-center cards; clean photography without clipped text */}
-                {!isCenter && (
-                  <div className="pointer-events-none absolute inset-0 bg-black/28" />
-                )}
-
-                {/* Center card badges */}
+                {/* Clean photograph only — zero text overlays or badges on the image */}
                 <div
-                  className={`absolute top-4 left-4 right-4 sm:top-5 sm:left-5 sm:right-5 flex items-center justify-between gap-2 transition-opacity duration-300 ${
-                    isCenter ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                  }`}
+                  data-coverflow-interactive={isCenter ? prop.id : undefined}
+                  className="flex flex-col"
                 >
-                  <div className="flex flex-wrap items-center gap-2 min-w-0">
-                    <span className="px-3.5 py-1.5 rounded-full bg-black/78 backdrop-blur-md text-[13px] font-medium text-white shadow-sm truncate max-w-full">
-                      {prop.listing_type} &middot; {prop.status}
-                    </span>
-                    {prop.is_demo && (
-                      <span className="px-3 py-1.5 rounded-full bg-black/78 backdrop-blur-md text-[13px] font-medium text-white shadow-sm">
-                        Sample listing
-                      </span>
-                    )}
-                  </div>
-
-                  {isCenter && (
-                    <FavoriteButton
-                      isFavorite={isFav}
-                      onToggle={() => toggleFavorite(prop.id)}
-                      ariaLabel={`Save ${prop.title}`}
+                  <button
+                    type="button"
+                    disabled={!isCenter}
+                    onClick={(e) => {
+                      if (!isCenter || dragMovedRef.current) return;
+                      e.stopPropagation();
+                      pauseBriefly();
+                      setRevealedPropId((curr) =>
+                        curr === prop.id ? null : prop.id
+                      );
+                    }}
+                    aria-label={
+                      isCenter
+                        ? `${prop.title} photo — tap to ${isRevealed ? 'hide' : 'show'} Details button`
+                        : `Select ${prop.title}`
+                    }
+                    aria-expanded={isCenter ? isRevealed : undefined}
+                    className={`tap-press relative block w-full aspect-[16/10] overflow-hidden bg-[var(--bg-surface-muted)] [&_img]:pointer-events-none focus-visible:outline-none ${
+                      isCenter ? 'cursor-pointer' : 'cursor-pointer'
+                    }`}
+                  >
+                    <PropertyImage
+                      src={prop.images[0]?.url}
+                      alt={buildPropertyImageAlt(prop.title, prop.location)}
+                      className="w-full h-full object-cover object-center"
+                      sizes="(max-width: 640px) 88vw, (max-width: 1024px) 64vw, 48vw"
                     />
-                  )}
-                </div>
-
-                {/* Dedicated Dark Gradient Bottom Panel (shown only on active center card) */}
-                <div
-                  className={`absolute inset-x-0 bottom-0 pt-14 p-[clamp(1rem,3vw,2rem)] bg-gradient-to-t from-black/92 via-black/78 to-transparent text-white transition-opacity duration-300 ${
-                    isCenter ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                  }`}
-                >
-                  {reasons && reasons.length > 0 && isCenter && (
-                    <p className="text-[13px] font-medium text-[#F5DFB0] mb-1.5 [text-shadow:0_1px_8px_rgba(0,0,0,0.65)]">
-                      {reasons.slice(0, 2).join(' · ')}
-                    </p>
-                  )}
-                  <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
-                    <span className="font-display text-[clamp(1.375rem,3vw,1.875rem)] font-semibold tabular-nums text-white [text-shadow:0_2px_10px_rgba(0,0,0,0.65)]">
-                      {formatINRReadable(prop.price_inr, prop.listing_type)}
-                    </span>
-                    <span className="text-[13px] font-medium text-white/95 [text-shadow:0_1px_8px_rgba(0,0,0,0.65)]">
-                      {prop.property_type}
-                      {prop.bedrooms > 0 ? ` · ${prop.bedrooms} BHK` : ''}
-                      {prop.area_sqft > 0
-                        ? ` · ${prop.area_sqft.toLocaleString('en-IN')} sq ft`
-                        : ''}
-                    </span>
-                  </div>
-                  <h3 className="font-display text-[clamp(1.25rem,2.8vw,1.875rem)] font-medium tracking-[-0.015em] line-clamp-1 text-white [text-shadow:0_2px_12px_rgba(0,0,0,0.7)]">
-                    {prop.title}
-                  </h3>
-                  <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-between gap-3">
-                    <span className="inline-flex items-center gap-1.5 text-sm font-medium text-white/95 truncate max-w-full [text-shadow:0_1px_8px_rgba(0,0,0,0.65)]">
-                      <MapPin className="w-4 h-4 text-[#F5DFB0] shrink-0" />
-                      {locText}
-                    </span>
-                    {isCenter && (
-                      <Link
-                        to={`/properties/${prop.slug}`}
-                        onClick={(e) => {
-                          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                          e.preventDefault();
-                          navigateWithTransition(navigate, `/properties/${prop.slug}`);
-                        }}
-                        className="btn-primary-lux min-h-[44px] inline-flex items-center px-5 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium whitespace-nowrap shrink-0 shadow-sm"
-                      >
-                        View details
-                      </Link>
+                    {!isCenter && (
+                      <div className="pointer-events-none absolute inset-0 bg-black/22" />
                     )}
+                  </button>
+
+                  {/* Price, title, location and key details sit cleanly below the photo */}
+                  <div className="p-3.5 sm:p-5 flex flex-col gap-1.5 text-left min-w-0">
+                    <div className="flex items-baseline justify-between gap-2 min-w-0">
+                      <span className="font-display text-[clamp(1.25rem,2.4vw,1.65rem)] font-semibold tabular-nums text-[var(--accent-primary)] leading-tight">
+                        {formatINRReadable(
+                          prop.price_inr,
+                          prop.listing_type,
+                          prop.price_unit
+                        )}
+                      </span>
+                      <span className="text-[13px] font-medium text-[var(--text-muted)] whitespace-nowrap">
+                        {prop.listing_type}
+                      </span>
+                    </div>
+
+                    <h3 className="font-display text-[clamp(1.1rem,2.2vw,1.375rem)] font-medium text-[var(--text-primary)] leading-snug truncate">
+                      {prop.title}
+                    </h3>
+
+                    <p className="inline-flex items-center gap-1.5 text-sm text-[var(--text-secondary)] min-w-0">
+                      <MapPin className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                      <span className="truncate">{locText}</span>
+                    </p>
+
+                    {detailSummary && (
+                      <p className="text-[13px] text-[var(--text-muted)] tabular-nums truncate">
+                        {detailSummary}
+                      </p>
+                    )}
+
+                    <AnimatePresence initial={false}>
+                      {isRevealed && (
+                        <motion.div
+                          key={`details-${prop.id}`}
+                          initial={
+                            prefersReduced ? { opacity: 1 } : { opacity: 0, y: 6 }
+                          }
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={
+                            prefersReduced ? { opacity: 0 } : { opacity: 0, y: 4 }
+                          }
+                          transition={{ duration: 0.2, ease: LUX_EASE }}
+                          className="pt-2"
+                        >
+                          <Link
+                            to={`/properties/${prop.slug}`}
+                            onClick={(e) => {
+                              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+                                return;
+                              e.preventDefault();
+                              navigateWithTransition(
+                                navigate,
+                                `/properties/${prop.slug}`
+                              );
+                            }}
+                            className="btn-primary-lux tap-press min-h-[44px] w-full sm:w-auto px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center justify-center whitespace-nowrap shadow-xs"
+                          >
+                            Details
+                          </Link>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
               </div>
@@ -369,16 +477,17 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
               key={p.id}
               type="button"
               onClick={() => {
+                setRevealedPropId(null);
                 pauseBriefly();
                 setActiveIndex(idx);
               }}
               aria-label={`View recommended property ${idx + 1}: ${p.title}`}
-              className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center cursor-pointer"
+              className="tap-press min-h-[44px] min-w-[44px] inline-flex items-center justify-center cursor-pointer"
             >
               <span
-                className={`block h-2 rounded-full transition-all duration-300 ${
+                className={`block h-2 rounded-full transition-transform duration-300 ${
                   idx === activeIndex
-                    ? 'w-9 bg-[var(--accent-secondary)]'
+                    ? 'w-8 bg-[var(--accent-secondary)]'
                     : 'w-2 bg-[var(--border-hairline)] hover:bg-[var(--text-muted)]'
                 }`}
               />

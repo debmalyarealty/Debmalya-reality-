@@ -131,6 +131,7 @@ export const DashboardCoachmark: React.FC = () => {
     };
 
     window.addEventListener('resize', syncPosition, { passive: true });
+    window.addEventListener('orientationchange', syncPosition, { passive: true });
     window.addEventListener('scroll', syncPosition, { passive: true });
     document.addEventListener('pointerdown', onPointerDownOutside, { passive: true });
     window.addEventListener('keydown', onKeyDown);
@@ -139,6 +140,7 @@ export const DashboardCoachmark: React.FC = () => {
       window.clearTimeout(autoTimer);
       window.cancelAnimationFrame(rafId);
       window.removeEventListener('resize', syncPosition);
+      window.removeEventListener('orientationchange', syncPosition);
       window.removeEventListener('scroll', syncPosition);
       document.removeEventListener('pointerdown', onPointerDownOutside);
       window.removeEventListener('keydown', onKeyDown);

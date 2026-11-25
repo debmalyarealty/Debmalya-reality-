@@ -53,13 +53,15 @@ export const PropertyImage: React.FC<PropertyImageProps> = ({
       srcSet={localSources ? localSources.jpegSrcSet : undefined}
       sizes={localSources ? sizes : undefined}
       alt={alt}
+      draggable={false}
+      onDragStart={(e) => e.preventDefault()}
       loading={priority ? 'eager' : 'lazy'}
       decoding="async"
       fetchPriority={priority ? 'high' : 'auto'}
       referrerPolicy="no-referrer"
       onLoad={() => setLoaded(true)}
       onError={() => setFailed(true)}
-      className={`${className} transition-opacity duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+      className={`${className} [-webkit-user-drag:none] transition-opacity duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
         loaded ? 'opacity-100' : 'opacity-0'
       }`}
     />

@@ -10,6 +10,7 @@ export const DEFAULT_SITE_SETTINGS: WebsiteSettings = {
     'Sevoke Road, Ward Number 13, Dasrath Pally, Bhanu Nagar, Siliguri, West Bengal 734001.',
   phone: '+91 86498 58954',
   whatsapp: '918649858954',
+  email: 'rounakdeysarkar90@gmail.com',
   logo_url: '',
   hero_headline: "Find a Place You'll Love to Call Home.",
   hero_subheadline:

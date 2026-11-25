@@ -279,7 +279,7 @@ export const FirstVisitSignInPrompt: React.FC = () => {
             }
             transition={{ duration: prefersReduced ? 0.01 : 0.28, ease: LUX_EASE }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full sm:max-w-[420px] max-h-[85dvh] overflow-y-auto rounded-t-[24px] sm:rounded-[24px] bg-[var(--bg-surface)] text-[var(--text-primary)] border-t sm:border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] pt-3 px-5 pb-[calc(env(safe-area-inset-bottom,0px)+1.35rem)] sm:p-7"
+            className="relative w-full sm:max-w-[420px] max-h-[85dvh] overflow-y-auto rounded-t-[24px] sm:rounded-[24px] bg-[var(--bg-surface)] text-[var(--text-primary)] border-t sm:border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] pt-3 pl-[max(1.25rem,env(safe-area-inset-left,0px))] pr-[max(1.25rem,env(safe-area-inset-right,0px))] pb-[calc(env(safe-area-inset-bottom,0px)+1.35rem)] sm:p-7"
           >
             {/* Mobile bottom-sheet handle bar */}
             <div

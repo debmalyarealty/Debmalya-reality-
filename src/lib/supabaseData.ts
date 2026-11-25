@@ -15,6 +15,7 @@ import {
   writeCache,
 } from './localCache';
 import { slugify } from './realtyLogic';
+import { mapSignInAuthError } from './authCallback';
 import type {
   Agent,
   Booking,
@@ -25,6 +26,7 @@ import type {
   InquiryStatus,
   ListingType,
   OwnerDashboardStats,
+  PriceUnit,
   Property,
   PropertyStatus,
   Review,
@@ -34,6 +36,50 @@ import type {
   UserRole,
   WebsiteSettings,
 } from '../types/realty';
+
+const LOCAL_READ_INQUIRIES_KEY = 'dr_owner_read_inquiries_v1';
+
+function readLocalReadInquirySet(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = window.localStorage.getItem(LOCAL_READ_INQUIRIES_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.map(String)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function addLocalReadInquiryId(id: string): void {
+  if (typeof window === 'undefined' || !id) return;
+  try {
+    const next = readLocalReadInquirySet();
+    next.add(String(id));
+    window.localStorage.setItem(
+      LOCAL_READ_INQUIRIES_KEY,
+      JSON.stringify(Array.from(next))
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function isMissingColumnError(
+  error: { code?: string; message?: string } | null | undefined,
+  columnName?: string
+): boolean {
+  if (!error) return false;
+  const msg = String(error.message || '').toLowerCase();
+  const code = String(error.code || '');
+  const isSchemaErr =
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('schema cache') ||
+    msg.includes('does not exist');
+  if (!isSchemaErr) return false;
+  return columnName ? msg.includes(columnName.toLowerCase()) : true;
+}
 
 function requireClient() {
   if (!isSupabaseConfigured || !supabase) {
@@ -106,6 +152,11 @@ export function mapPropertyRow(row: Record<string, unknown>): Property {
   const title = String(row.title || '');
   const rawImages = Array.isArray(row.images) ? row.images : [];
   const rawAmenities = Array.isArray(row.amenities) ? row.amenities : [];
+  const rawPriceUnit = row.price_unit ? String(row.price_unit) : '';
+  const price_unit: PriceUnit | undefined =
+    rawPriceUnit === 'night' || rawPriceUnit === 'month' || rawPriceUnit === 'total'
+      ? (rawPriceUnit as PriceUnit)
+      : undefined;
 
   return {
     id,
@@ -113,6 +164,7 @@ export function mapPropertyRow(row: Record<string, unknown>): Property {
     title,
     description: String(row.description || ''),
     price_inr: Number(row.price ?? row.price_inr ?? 0),
+    price_unit,
     listing_type: fromDbListingType(String(row.listing_type || 'buy')),
     property_type: String(row.category || row.property_type || 'Flats / Apartments'),
     location: String(row.location || 'Siliguri'),
@@ -127,6 +179,10 @@ export function mapPropertyRow(row: Record<string, unknown>): Property {
     status: fromDbPropertyStatus(String(row.status || 'available')),
     is_published: row.is_published !== false,
     is_featured: Boolean(row.is_featured),
+    is_recommended:
+      row.is_recommended != null
+        ? Boolean(row.is_recommended)
+        : Boolean(row.is_featured),
     is_demo: false,
     amenities: rawAmenities.map((a) => String(a)).filter(Boolean),
     images: rawImages
@@ -177,8 +233,16 @@ function mapReviewRow(row: Record<string, unknown>): Review {
 }
 
 function mapInquiryRow(row: Record<string, unknown>): Inquiry {
+  const id = String(row.id);
+  const status = (row.status || 'new') as InquiryStatus;
+  const localReadIds = readLocalReadInquirySet();
+  const is_read =
+    typeof row.is_read === 'boolean'
+      ? row.is_read || localReadIds.has(id)
+      : status !== 'new' || localReadIds.has(id);
+
   return {
-    id: String(row.id),
+    id,
     user_id: row.user_id ? String(row.user_id) : null,
     property_id: row.property_id ? String(row.property_id) : null,
     property_title: row.property_title ? String(row.property_title) : null,
@@ -187,7 +251,8 @@ function mapInquiryRow(row: Record<string, unknown>): Inquiry {
     email: String(row.email || ''),
     interested_in: String(row.interest || row.interested_in || ''),
     message: String(row.message || ''),
-    status: (row.status || 'new') as InquiryStatus,
+    status,
+    is_read,
     owner_notes: String(row.owner_notes || ''),
     created_at: String(row.created_at || new Date().toISOString()),
     updated_at: String(row.updated_at || row.created_at || new Date().toISOString()),
@@ -242,6 +307,9 @@ function mapSettingsRow(row: Record<string, unknown> | null): WebsiteSettings {
     address: String(row.address || DEFAULT_SITE_SETTINGS.address),
     phone: String(row.phone || DEFAULT_SITE_SETTINGS.phone),
     whatsapp: String(row.whatsapp || DEFAULT_SITE_SETTINGS.whatsapp),
+    email: String(
+      row.email || social.email || DEFAULT_SITE_SETTINGS.email || 'rounakdeysarkar90@gmail.com'
+    ),
     logo_url: String(row.logo_url || ''),
     hero_headline: String(row.hero_headline || DEFAULT_SITE_SETTINGS.hero_headline),
     hero_subheadline: String(
@@ -350,15 +418,10 @@ export async function signInWithEmail(
     password,
   });
   if (error) {
-    if (error.message.toLowerCase().includes('email not confirmed')) {
-      throw new Error(
-        'Please confirm your email address using the link sent to your inbox before signing in.'
-      );
-    }
-    throw new Error(error.message);
+    throw new Error(mapSignInAuthError(error.message));
   }
   if (!data.user) {
-    throw new Error('Unable to sign in. Please try again.');
+    throw new Error('Incorrect email or password.');
   }
   const profile = await getCurrentSessionProfile();
   if (!profile) {
@@ -402,6 +465,47 @@ export async function signUpWithEmail(params: {
 
   const profile = await getCurrentSessionProfile();
   return { profile, needsEmailConfirmation: false };
+}
+
+export async function resendSignupVerificationEmail(email: string): Promise<void> {
+  const client = requireClient();
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) {
+    throw new Error('Please enter your email address.');
+  }
+  const { error } = await client.auth.resend({
+    type: 'signup',
+    email: cleanEmail,
+    options: {
+      emailRedirectTo:
+        typeof window !== 'undefined' ? window.location.origin : undefined,
+    },
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function exchangeAuthCodeForSession(code: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client.auth.exchangeCodeForSession(code);
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function verifyEmailOtpTokenHash(
+  tokenHash: string,
+  type: 'signup' | 'email' | 'recovery' | 'magiclink'
+): Promise<void> {
+  const client = requireClient();
+  const { error } = await client.auth.verifyOtp({
+    token_hash: tokenHash,
+    type,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 export async function sendPasswordResetEmail(email: string): Promise<void> {
@@ -746,7 +850,7 @@ export async function submitInquiry(params: {
   message: string;
 }): Promise<void> {
   const client = requireClient();
-  const { error } = await client.from('inquiries').insert({
+  const payload = {
     user_id: params.user_id || null,
     property_id: params.property_id || null,
     property_title: params.property_title || '',
@@ -756,7 +860,13 @@ export async function submitInquiry(params: {
     interest: params.interest.trim(),
     message: params.message.trim(),
     status: 'new',
-  });
+    is_read: false,
+  };
+  let { error } = await client.from('inquiries').insert(payload);
+  if (isMissingColumnError(error, 'is_read')) {
+    const { is_read: _omit, ...fallback } = payload;
+    ({ error } = await client.from('inquiries').insert(fallback));
+  }
   if (error) throw new Error(error.message);
   invalidateDashboardCaches();
 }
@@ -1172,6 +1282,7 @@ export interface OwnerDashboardData {
   stats: OwnerDashboardStats;
   properties: Property[];
   favoriteCounts: Record<string, number>;
+  savedByClientId: Record<string, string[]>;
   inquiries: Inquiry[];
   bookings: Booking[];
   reviews: Review[];
@@ -1236,7 +1347,7 @@ export async function fetchOwnerDashboardData(
         .from('profiles')
         .select('id, email, full_name, phone, city, role, created_at')
         .order('created_at', { ascending: false }),
-      client.from('favourites').select('property_id'),
+      client.from('favourites').select('user_id, property_id'),
     ]);
 
   if (propRes.error) throw new Error(propRes.error.message);
@@ -1248,11 +1359,19 @@ export async function fetchOwnerDashboardData(
   if (profRes.error) throw new Error(profRes.error.message);
 
   const favoriteCounts: Record<string, number> = {};
+  const savedByClientId: Record<string, string[]> = {};
   if (!favRes.error && Array.isArray(favRes.data)) {
     for (const row of favRes.data) {
       const pid = row.property_id ? String(row.property_id) : '';
+      const uid = row.user_id ? String(row.user_id) : '';
       if (pid) {
         favoriteCounts[pid] = (favoriteCounts[pid] || 0) + 1;
+      }
+      if (uid && pid) {
+        if (!savedByClientId[uid]) savedByClientId[uid] = [];
+        if (!savedByClientId[uid].includes(pid)) {
+          savedByClientId[uid].push(pid);
+        }
       }
     }
   }
@@ -1296,7 +1415,7 @@ export async function fetchOwnerDashboardData(
     ).length,
     sold_properties: properties.filter((p) => p.status === 'Sold').length,
     rented_properties: properties.filter((p) => p.status === 'Rented').length,
-    new_inquiries: inquiries.filter((i) => i.status === 'new').length,
+    new_inquiries: inquiries.filter((i) => !i.is_read).length,
     total_inquiries: inquiries.length,
     pending_bookings: bookings.filter((b) => b.status === 'pending').length,
     total_bookings: bookings.length,
@@ -1309,6 +1428,7 @@ export async function fetchOwnerDashboardData(
     stats,
     properties,
     favoriteCounts,
+    savedByClientId,
     inquiries,
     bookings,
     reviews,
@@ -1328,10 +1448,13 @@ export async function ownerSaveProperty(
     title: string;
     description: string;
     price_inr: number;
+    price_unit?: PriceUnit;
     listing_type: ListingType;
     property_type: string;
     location: string;
     address_detail: string;
+    latitude?: number | null;
+    longitude?: number | null;
     bedrooms: number;
     bathrooms: number;
     area_sqft: number;
@@ -1340,20 +1463,31 @@ export async function ownerSaveProperty(
     status: PropertyStatus;
     is_published: boolean;
     is_featured: boolean;
+    is_recommended?: boolean;
     amenities: string[];
     images: string[];
   }
 ): Promise<{ id: string; slug: string }> {
   const client = requireClient();
   const baseSlug = slugify(input.title) || 'siliguri-property';
-  const dbPayload = {
+  const dbPayload: Record<string, unknown> = {
     title: input.title.trim(),
     description: input.description.trim(),
     price: Math.max(0, Math.round(Number(input.price_inr) || 0)),
+    price_unit:
+      input.price_unit || (input.listing_type === 'Rent' ? 'night' : 'total'),
     listing_type: toDbListingType(input.listing_type),
     category: input.property_type.trim(),
     location: input.location.trim(),
     address_detail: input.address_detail.trim(),
+    latitude:
+      input.latitude != null && Number.isFinite(input.latitude)
+        ? input.latitude
+        : null,
+    longitude:
+      input.longitude != null && Number.isFinite(input.longitude)
+        ? input.longitude
+        : null,
     bedrooms: Math.max(0, Math.round(Number(input.bedrooms) || 0)),
     bathrooms: Math.max(0, Math.round(Number(input.bathrooms) || 0)),
     area_sqft: Math.max(0, Math.round(Number(input.area_sqft) || 0)),
@@ -1362,6 +1496,10 @@ export async function ownerSaveProperty(
     status: toDbPropertyStatus(input.status),
     is_published: Boolean(input.is_published),
     is_featured: Boolean(input.is_featured),
+    is_recommended:
+      input.is_recommended != null
+        ? Boolean(input.is_recommended)
+        : Boolean(input.is_featured),
     amenities: input.amenities,
     images: input.images,
   };
@@ -1369,30 +1507,42 @@ export async function ownerSaveProperty(
   let savedId = editingId || '';
   let savedSlug = baseSlug;
 
-  if (editingId) {
-    const { data, error } = await client
-      .from('properties')
-      .update(dbPayload)
-      .eq('id', editingId)
-      .select('id, slug')
-      .single();
-    if (error) throw new Error(error.message);
-    savedId = data?.id ? String(data.id) : editingId;
-    savedSlug = data?.slug ? String(data.slug) : baseSlug;
-  } else {
+  const executeWrite = async (payloadToWrite: Record<string, unknown>) => {
+    if (editingId) {
+      return client
+        .from('properties')
+        .update(payloadToWrite)
+        .eq('id', editingId)
+        .select('id, slug')
+        .single();
+    }
     const uniqueSlug = `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`;
-    const { data, error } = await client
+    return client
       .from('properties')
       .insert({
-        ...dbPayload,
+        ...payloadToWrite,
         slug: uniqueSlug,
       })
       .select('id, slug')
       .single();
-    if (error) throw new Error(error.message);
-    savedId = data?.id ? String(data.id) : '';
-    savedSlug = data?.slug ? String(data.slug) : uniqueSlug;
+  };
+
+  let activePayload = { ...dbPayload };
+  let { data, error } = await executeWrite(activePayload);
+
+  // Strip optional unmigrated columns only if Postgres schema lacks them
+  for (const optionalCol of ['is_recommended', 'price_unit']) {
+    if (error && isMissingColumnError(error, optionalCol)) {
+      const nextPayload = { ...activePayload };
+      delete nextPayload[optionalCol];
+      activePayload = nextPayload;
+      ({ data, error } = await executeWrite(activePayload));
+    }
   }
+
+  if (error) throw new Error(error.message);
+  savedId = data?.id ? String(data.id) : savedId;
+  savedSlug = data?.slug ? String(data.slug) : savedSlug;
   invalidatePublicCaches();
   invalidateDashboardCaches();
   return { id: savedId, slug: savedSlug };
@@ -1420,16 +1570,36 @@ export async function ownerDeleteProperty(id: string): Promise<void> {
   invalidateDashboardCaches();
 }
 
+export async function ownerMarkInquiryRead(id: string): Promise<void> {
+  addLocalReadInquiryId(id);
+  const client = requireClient();
+  const { error } = await client
+    .from('inquiries')
+    .update({ is_read: true })
+    .eq('id', id);
+  if (error && !isMissingColumnError(error, 'is_read')) {
+    throw new Error(error.message);
+  }
+  invalidateDashboardCaches();
+}
+
 export async function ownerUpdateInquiry(
   id: string,
   status: InquiryStatus,
   ownerNotes: string
 ): Promise<void> {
+  addLocalReadInquiryId(id);
   const client = requireClient();
-  const { error } = await client
+  let { error } = await client
     .from('inquiries')
-    .update({ status, owner_notes: ownerNotes })
+    .update({ status, owner_notes: ownerNotes, is_read: true })
     .eq('id', id);
+  if (isMissingColumnError(error, 'is_read')) {
+    ({ error } = await client
+      .from('inquiries')
+      .update({ status, owner_notes: ownerNotes })
+      .eq('id', id));
+  }
   if (error) throw new Error(error.message);
   invalidateDashboardCaches();
 }
@@ -1555,6 +1725,7 @@ export async function ownerSaveSiteSettings(
       social_links: {
         ...settings.social_links,
         google_review: (settings.google_review_link || '').trim(),
+        email: (settings.email || DEFAULT_SITE_SETTINGS.email || '').trim(),
       },
       updated_at: new Date().toISOString(),
     },

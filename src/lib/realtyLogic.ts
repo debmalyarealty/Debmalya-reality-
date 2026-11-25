@@ -1,16 +1,28 @@
 import type {
   CustomerPreferences,
   ListingType,
+  PriceUnit,
   Property,
   PropertyFilters,
   PropertyStatus,
   SavedSearch,
 } from '../types/realty';
 
+function formatPriceSuffix(
+  listingType?: ListingType,
+  priceUnit?: PriceUnit
+): string {
+  if (priceUnit === 'night') return ' / night';
+  if (priceUnit === 'month') return ' / month';
+  if (priceUnit === 'total') return '';
+  return listingType === 'Rent' ? '/mo' : '';
+}
+
 export function formatINR(
   amount: number,
   listingType?: ListingType,
-  compact = false
+  compact = false,
+  priceUnit?: PriceUnit
 ): string {
   if (!Number.isFinite(amount) || amount < 0) {
     return 'Price on Request';
@@ -31,12 +43,13 @@ export function formatINR(
     formatted = `₹${Math.round(amount).toLocaleString('en-IN')}`;
   }
 
-  return listingType === 'Rent' ? `${formatted}/mo` : formatted;
+  return `${formatted}${formatPriceSuffix(listingType, priceUnit)}`;
 }
 
 export function formatINRReadable(
   amount: number,
-  listingType?: ListingType
+  listingType?: ListingType,
+  priceUnit?: PriceUnit
 ): string {
   if (!Number.isFinite(amount) || amount < 0) {
     return 'Price on Request';
@@ -53,7 +66,7 @@ export function formatINRReadable(
     formatted = `₹${Math.round(amount).toLocaleString('en-IN')}`;
   }
 
-  return listingType === 'Rent' ? `${formatted}/mo` : formatted;
+  return `${formatted}${formatPriceSuffix(listingType, priceUnit)}`;
 }
 
 const SHORT_MONTHS = [
@@ -504,8 +517,43 @@ export function isValidEmail(email: string): boolean {
 }
 
 export function isValidPhone(phone: string): boolean {
-  const digits = phone.replace(/[^\d+]/g, '');
-  return digits.length >= 10 && digits.length <= 15;
+  const cleaned = phone.replace(/[\s\-().]/g, '');
+  return /^(?:\+91)?[6-9]\d{9}$/.test(cleaned);
+}
+
+export interface InquiryFieldErrors {
+  name?: string;
+  phone?: string;
+  email?: string;
+  interested_in?: string;
+  message?: string;
+}
+
+export function validateInquiryFields(input: {
+  name: string;
+  phone: string;
+  email: string;
+  interested_in: string;
+  message: string;
+}): { fields: InquiryFieldErrors; firstError: string | null } {
+  const fields: InquiryFieldErrors = {};
+  if (!input.name || input.name.trim().length < 2) {
+    fields.name = 'Please enter your name (at least 2 characters).';
+  }
+  if (!isValidPhone(input.phone)) {
+    fields.phone = 'Enter a 10-digit mobile number.';
+  }
+  if (input.email.trim().length > 0 && !isValidEmail(input.email)) {
+    fields.email = 'Enter a valid email address.';
+  }
+  if (!input.interested_in || input.interested_in.trim().length < 2) {
+    fields.interested_in = 'Please choose what you are interested in.';
+  }
+  if (!input.message || input.message.trim().length < 5) {
+    fields.message = 'Please enter your message (at least 5 characters).';
+  }
+  const firstError = Object.values(fields)[0] ?? null;
+  return { fields, firstError };
 }
 
 export function validateInquiryInput(input: {
@@ -515,22 +563,47 @@ export function validateInquiryInput(input: {
   interested_in: string;
   message: string;
 }): string | null {
-  if (!input.name || input.name.trim().length < 2) {
-    return 'Please enter your full name (at least 2 characters).';
+  return validateInquiryFields(input).firstError;
+}
+
+export interface AppointmentFieldErrors {
+  customer_name?: string;
+  phone?: string;
+  email?: string;
+  property_id?: string;
+  preferred_date?: string;
+  preferred_time?: string;
+}
+
+export function validateAppointmentFields(input: {
+  customer_name: string;
+  phone: string;
+  email: string;
+  property_id: string;
+  preferred_date: string;
+  preferred_time: string;
+}): { fields: AppointmentFieldErrors; firstError: string | null } {
+  const fields: AppointmentFieldErrors = {};
+  if (!input.customer_name || input.customer_name.trim().length < 2) {
+    fields.customer_name = 'Please enter your name.';
   }
   if (!isValidPhone(input.phone)) {
-    return 'Please enter a valid 10-digit mobile or WhatsApp number.';
+    fields.phone = 'Enter a 10-digit mobile number.';
   }
-  if (input.email && !isValidEmail(input.email)) {
-    return 'Please enter a valid email address.';
+  if (input.email.trim().length > 0 && !isValidEmail(input.email)) {
+    fields.email = 'Enter a valid email address.';
   }
-  if (!input.interested_in || input.interested_in.trim().length < 2) {
-    return 'Please specify what you are interested in.';
+  if (!input.property_id) {
+    fields.property_id = 'Please select a property for the site visit.';
   }
-  if (!input.message || input.message.trim().length < 5) {
-    return 'Please enter a brief message (at least 5 characters).';
+  if (!input.preferred_date) {
+    fields.preferred_date = 'Please choose a preferred date.';
   }
-  return null;
+  if (!input.preferred_time) {
+    fields.preferred_time = 'Please choose a preferred time slot.';
+  }
+  const firstError = Object.values(fields)[0] ?? null;
+  return { fields, firstError };
 }
 
 export function validateAppointmentInput(input: {
@@ -541,25 +614,41 @@ export function validateAppointmentInput(input: {
   preferred_date: string;
   preferred_time: string;
 }): string | null {
-  if (!input.customer_name || input.customer_name.trim().length < 2) {
-    return 'Please enter your full name.';
+  return validateAppointmentFields(input).firstError;
+}
+
+export interface ReviewFieldErrors {
+  reviewer_name?: string;
+  reviewer_email?: string;
+  rating?: string;
+  review_text?: string;
+}
+
+export function validateReviewFields(input: {
+  reviewer_name: string;
+  reviewer_email?: string;
+  rating: number;
+  review_text: string;
+}): { fields: ReviewFieldErrors; firstError: string | null } {
+  const fields: ReviewFieldErrors = {};
+  if (!input.reviewer_name || input.reviewer_name.trim().length < 2) {
+    fields.reviewer_name = 'Please enter your name.';
   }
-  if (!isValidPhone(input.phone)) {
-    return 'Please enter a valid phone number.';
+  if (
+    input.reviewer_email &&
+    input.reviewer_email.trim().length > 0 &&
+    !isValidEmail(input.reviewer_email)
+  ) {
+    fields.reviewer_email = 'Enter a valid email address.';
   }
-  if (!isValidEmail(input.email)) {
-    return 'Please enter a valid email address.';
+  if (!Number.isFinite(input.rating) || input.rating < 1 || input.rating > 5) {
+    fields.rating = 'Please select a rating between 1 and 5.';
   }
-  if (!input.property_id) {
-    return 'Please select a property for the site visit.';
+  if (!input.review_text || input.review_text.trim().length < 10) {
+    fields.review_text = 'Please write your review (at least 10 characters).';
   }
-  if (!input.preferred_date) {
-    return 'Please choose a preferred date.';
-  }
-  if (!input.preferred_time) {
-    return 'Please choose a preferred time slot.';
-  }
-  return null;
+  const firstError = Object.values(fields)[0] ?? null;
+  return { fields, firstError };
 }
 
 export function validateReviewInput(input: {
@@ -568,19 +657,7 @@ export function validateReviewInput(input: {
   rating: number;
   review_text: string;
 }): string | null {
-  if (!input.reviewer_name || input.reviewer_name.trim().length < 2) {
-    return 'Please enter your name.';
-  }
-  if (input.reviewer_email && !isValidEmail(input.reviewer_email)) {
-    return 'Please enter a valid email address.';
-  }
-  if (!Number.isFinite(input.rating) || input.rating < 1 || input.rating > 5) {
-    return 'Please select a rating between 1 and 5.';
-  }
-  if (!input.review_text || input.review_text.trim().length < 10) {
-    return 'Please share at least 10 characters in your review.';
-  }
-  return null;
+  return validateReviewFields(input).firstError;
 }
 
 /**

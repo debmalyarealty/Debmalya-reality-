@@ -489,7 +489,7 @@ export const PropertiesPage: React.FC = () => {
       </div>
 
       <div className="mb-4 sm:mb-6">
-        <h1 className="font-display text-[clamp(1.875rem,4.5vw,3rem)] font-medium text-[var(--text-primary)] leading-tight">
+        <h1 className="font-display text-[clamp(1.875rem,4.5vw,3rem)] font-medium text-[var(--text-primary)] leading-tight break-anywhere">
           Browse properties
         </h1>
       </div>
@@ -645,34 +645,34 @@ export const PropertiesPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="min-[420px]:col-span-2 lg:col-span-4 flex flex-wrap items-center gap-2">
+          <div className="min-[420px]:col-span-2 lg:col-span-4 flex items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={() => setMoreFiltersOpen(true)}
               aria-haspopup="dialog"
               aria-expanded={moreFiltersOpen}
-              className={`tap-press flex-1 min-h-[44px] px-4 rounded-full text-[13px] font-medium inline-flex items-center justify-center gap-2 transition-all cursor-pointer border whitespace-nowrap ${
+              className={`tap-press flex-1 min-w-0 min-h-[44px] px-3 min-[360px]:px-4 rounded-full text-[13px] font-medium inline-flex items-center justify-center gap-2 transition-all cursor-pointer border whitespace-nowrap ${
                 moreFiltersCount > 0
                   ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] font-semibold shadow-sm'
                   : 'bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)]'
               }`}
             >
               <SlidersHorizontal className="w-4 h-4 shrink-0" />
-              <span>More filters</span>
+              <span className="truncate">More filters</span>
               {moreFiltersCount > 0 && (
-                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[var(--cta-gold-ink)] text-[var(--cta-gold-bg)] text-[13px] font-semibold tabular-nums">
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[var(--cta-gold-ink)] text-[var(--cta-gold-bg)] text-[13px] font-semibold tabular-nums shrink-0">
                   {moreFiltersCount}
                 </span>
               )}
             </button>
 
-            <div ref={sortRef} className="relative">
+            <div ref={sortRef} className="relative shrink-0">
               <button
                 type="button"
                 onClick={() => setSortOpen((v) => !v)}
                 aria-haspopup="listbox"
                 aria-expanded={sortOpen}
-                className={`tap-press min-h-[44px] px-4 rounded-full text-[13px] font-medium inline-flex items-center justify-center gap-2 transition-all cursor-pointer border whitespace-nowrap ${
+                className={`tap-press min-h-[44px] px-3 min-[360px]:px-4 rounded-full text-[13px] font-medium inline-flex items-center justify-center gap-2 transition-all cursor-pointer border whitespace-nowrap ${
                   filters.sortBy && filters.sortBy !== 'newest'
                     ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] font-semibold shadow-sm'
                     : 'bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)]'
@@ -703,7 +703,7 @@ export const PropertiesPage: React.FC = () => {
                         : { opacity: 0, scale: 0.96, y: -4 }
                     }
                     transition={{ duration: 0.18, ease: LUX_EASE }}
-                    className="absolute right-0 mt-2 w-52 max-w-[calc(100vw-2rem)] z-30 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-1.5 space-y-1"
+                    className="absolute right-0 mt-2 w-52 max-w-[calc(100vw-2rem)] max-h-[min(90dvh,22rem)] overflow-y-auto z-30 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-1.5 space-y-1"
                   >
                     {SORT_OPTIONS.map((opt) => {
                       const active = (filters.sortBy || 'newest') === opt.value;
@@ -748,9 +748,9 @@ export const PropertiesPage: React.FC = () => {
             type="button"
             onClick={chip.onRemove}
             aria-label={`Remove ${chip.label} filter`}
-            className="tap-press min-h-[44px] px-3.5 rounded-full bg-[var(--bg-surface)] border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="tap-press max-w-full min-h-[44px] px-3.5 rounded-full bg-[var(--bg-surface)] border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
           >
-            <span>{chip.label}</span>
+            <span className="truncate">{chip.label}</span>
             <X className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
           </button>
         ))}
@@ -832,7 +832,7 @@ export const PropertiesPage: React.FC = () => {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.22, ease: LUX_EASE }}
             onClick={() => setMoreFiltersOpen(false)}
-            className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
+            className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-end sm:items-center justify-center pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:p-4"
           >
             <motion.div
               initial={
@@ -852,7 +852,7 @@ export const PropertiesPage: React.FC = () => {
               }
               transition={{ duration: 0.26, ease: LUX_EASE }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full sm:max-w-md max-h-[90dvh] overflow-y-auto rounded-t-[clamp(1.25rem,3vw,1.75rem)] sm:rounded-[28px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-[clamp(1.25rem,3vw,1.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+1.25rem)] space-y-6"
+              className="w-full sm:max-w-md max-h-[90dvh] overflow-y-auto rounded-t-[clamp(1.25rem,3vw,1.75rem)] sm:rounded-[28px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-[clamp(1.25rem,3vw,1.5rem)] pl-[max(clamp(1.25rem,3vw,1.5rem),env(safe-area-inset-left,0px))] pr-[max(clamp(1.25rem,3vw,1.5rem),env(safe-area-inset-right,0px))] pb-[calc(env(safe-area-inset-bottom,0px)+1.25rem)] space-y-6"
             >
               <div>
                 <div className="sm:hidden w-10 h-1 rounded-full bg-[var(--border-input)] mx-auto mb-3" />

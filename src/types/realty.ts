@@ -2,6 +2,8 @@ export type UserRole = 'owner' | 'client';
 
 export type ListingType = 'Buy' | 'Rent';
 
+export type PriceUnit = 'total' | 'night' | 'month';
+
 export type PropertyStatus =
   | 'Available'
   | 'Sold'
@@ -35,6 +37,7 @@ export interface Property {
   title: string;
   description: string;
   price_inr: number;
+  price_unit?: PriceUnit;
   listing_type: ListingType;
   property_type: string;
   location: string;
@@ -49,6 +52,7 @@ export interface Property {
   status: PropertyStatus;
   is_published: boolean;
   is_featured: boolean;
+  is_recommended?: boolean;
   is_demo: boolean;
   amenities: string[];
   images: PropertyImage[];
@@ -122,6 +126,7 @@ export interface Inquiry {
   interested_in: string;
   message: string;
   status: InquiryStatus;
+  is_read?: boolean;
   owner_notes: string;
   created_at: string;
   updated_at: string;
@@ -179,6 +184,7 @@ export interface WebsiteSettings {
   address: string;
   phone: string;
   whatsapp: string;
+  email?: string;
   logo_url: string;
   hero_headline: string;
   hero_subheadline: string;
