@@ -690,29 +690,29 @@ export const PropertyDetailPage: React.FC = () => {
           {/* Specifications: Beds, Baths, Area, Furnishing */}
           <div
             data-testid="property-key-specs"
-            className="grid grid-cols-4 gap-1.5 sm:gap-4 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 py-3 sm:p-5"
+            className="grid grid-cols-4 gap-1 sm:gap-4 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2 sm:p-5 py-3"
           >
             <div className="space-y-1 min-w-0">
-              <span className="text-[11px] sm:text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
-                <BedDouble className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                <BedDouble className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">Beds</span>
               </span>
-              <p className="text-xs sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
+              <p className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
                 {property.bedrooms > 0 ? property.bedrooms : '—'}
               </p>
             </div>
             <div className="space-y-1 min-w-0">
-              <span className="text-[11px] sm:text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
-                <Bath className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                <Bath className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">Baths</span>
               </span>
-              <p className="text-xs sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
+              <p className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
                 {property.bathrooms > 0 ? property.bathrooms : '—'}
               </p>
             </div>
             <div className="space-y-1 min-w-0">
-              <span className="text-[11px] sm:text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
-                <Maximize2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                <Maximize2 className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">Area</span>
               </span>
               <p
@@ -721,7 +721,7 @@ export const PropertyDetailPage: React.FC = () => {
                     ? `${property.area_sqft.toLocaleString('en-IN')} sq ft`
                     : undefined
                 }
-                className="text-xs sm:text-base font-semibold tabular-nums text-[var(--text-primary)] leading-snug break-words"
+                className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] leading-snug break-words"
               >
                 {property.area_sqft > 0
                   ? `${property.area_sqft.toLocaleString('en-IN')} sq ft`
@@ -729,13 +729,13 @@ export const PropertyDetailPage: React.FC = () => {
               </p>
             </div>
             <div className="space-y-1 min-w-0">
-              <span className="text-[11px] sm:text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
-                <Sofa className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                <Sofa className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">Furnishing</span>
               </span>
               <p
                 title={property.furnishing || undefined}
-                className="text-xs sm:text-base font-semibold text-[var(--text-primary)] leading-snug truncate"
+                className="text-[13px] sm:text-base font-semibold text-[var(--text-primary)] leading-snug truncate"
               >
                 {property.furnishing || '—'}
               </p>
@@ -847,17 +847,22 @@ export const PropertyDetailPage: React.FC = () => {
                 ) : (
                   <>
                     <div>
+                      <label
+                        htmlFor="visit-name"
+                        className="block text-[13px] font-medium text-[var(--text-primary)] mb-1"
+                      >
+                        Full Name *
+                      </label>
                       <input
                         id="visit-name"
                         type="text"
                         required
                         autoComplete="name"
-                        aria-label="Your Name"
                         aria-invalid={Boolean(vFieldErrors.customer_name)}
                         aria-describedby={
                           vFieldErrors.customer_name ? 'visit-name-error' : undefined
                         }
-                        placeholder="Your Full Name *"
+                        placeholder="Your full name"
                         value={vName}
                         onChange={(e) => {
                           setVName(e.target.value);
@@ -886,18 +891,23 @@ export const PropertyDetailPage: React.FC = () => {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
+                        <label
+                          htmlFor="visit-phone"
+                          className="block text-[13px] font-medium text-[var(--text-primary)] mb-1"
+                        >
+                          Phone / WhatsApp *
+                        </label>
                         <input
                           id="visit-phone"
                           type="tel"
                           inputMode="tel"
                           autoComplete="tel"
                           required
-                          aria-label="Phone Number"
                           aria-invalid={Boolean(vFieldErrors.phone)}
                           aria-describedby={
                             vFieldErrors.phone ? 'visit-phone-error' : undefined
                           }
-                          placeholder="Phone / WhatsApp *"
+                          placeholder="+91 98320 12345"
                           value={vPhone}
                           onChange={(e) => {
                             setVPhone(e.target.value);
@@ -922,17 +932,22 @@ export const PropertyDetailPage: React.FC = () => {
                         )}
                       </div>
                       <div>
+                        <label
+                          htmlFor="visit-email"
+                          className="block text-[13px] font-medium text-[var(--text-primary)] mb-1"
+                        >
+                          Email Address
+                        </label>
                         <input
                           id="visit-email"
                           type="email"
                           inputMode="email"
                           autoComplete="email"
-                          aria-label="Email Address"
                           aria-invalid={Boolean(vFieldErrors.email)}
                           aria-describedby={
                             vFieldErrors.email ? 'visit-email-error' : undefined
                           }
-                          placeholder="Email Address (optional)"
+                          placeholder="Optional"
                           value={vEmail}
                           onChange={(e) => {
                             setVEmail(e.target.value);
@@ -1030,15 +1045,22 @@ export const PropertyDetailPage: React.FC = () => {
                         </select>
                       </div>
                     </div>
-                    <textarea
-                      id="visit-message"
-                      rows={2}
-                      aria-label="Additional Message"
-                      placeholder="Additional notes (optional)"
-                      value={vMsg}
-                      onChange={(e) => setVMsg(e.target.value)}
-                      className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24"
-                    />
+                    <div>
+                      <label
+                        htmlFor="visit-message"
+                        className="block text-[13px] font-medium text-[var(--text-primary)] mb-1"
+                      >
+                        Additional Notes
+                      </label>
+                      <textarea
+                        id="visit-message"
+                        rows={2}
+                        placeholder="Optional notes or questions for your visit"
+                        value={vMsg}
+                        onChange={(e) => setVMsg(e.target.value)}
+                        className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors scroll-mt-24 scroll-mb-24"
+                      />
+                    </div>
 
                     {vError && (
                       <p
@@ -1088,15 +1110,20 @@ export const PropertyDetailPage: React.FC = () => {
                 className="space-y-3.5"
               >
                 <div>
+                  <label
+                    htmlFor="enquiry-name"
+                    className="block text-[13px] font-medium text-[var(--text-primary)] mb-1"
+                  >
+                    Full Name *
+                  </label>
                   <input
                     id="enquiry-name"
                     type="text"
                     required
                     autoComplete="name"
-                    aria-label="Your Name"
                     aria-invalid={Boolean(eFieldErrors.name)}
                     aria-describedby={eFieldErrors.name ? 'enquiry-name-error' : undefined}
-                    placeholder="Your Full Name *"
+                    placeholder="Your full name"
                     value={eName}
                     onChange={(e) => {
                       setEName(e.target.value);
@@ -1121,18 +1148,23 @@ export const PropertyDetailPage: React.FC = () => {
                   )}
                 </div>
                 <div>
+                  <label
+                    htmlFor="enquiry-phone"
+                    className="block text-[13px] font-medium text-[var(--text-primary)] mb-1"
+                  >
+                    Phone / WhatsApp *
+                  </label>
                   <input
                     id="enquiry-phone"
                     type="tel"
                     inputMode="tel"
                     autoComplete="tel"
                     required
-                    aria-label="Phone Number"
                     aria-invalid={Boolean(eFieldErrors.phone)}
                     aria-describedby={
                       eFieldErrors.phone ? 'enquiry-phone-error' : undefined
                     }
-                    placeholder="Phone / WhatsApp *"
+                    placeholder="+91 98320 12345"
                     value={ePhone}
                     onChange={(e) => {
                       setEPhone(e.target.value);
@@ -1157,17 +1189,22 @@ export const PropertyDetailPage: React.FC = () => {
                   )}
                 </div>
                 <div>
+                  <label
+                    htmlFor="enquiry-email"
+                    className="block text-[13px] font-medium text-[var(--text-primary)] mb-1"
+                  >
+                    Email Address
+                  </label>
                   <input
                     id="enquiry-email"
                     type="email"
                     inputMode="email"
                     autoComplete="email"
-                    aria-label="Email Address"
                     aria-invalid={Boolean(eFieldErrors.email)}
                     aria-describedby={
                       eFieldErrors.email ? 'enquiry-email-error' : undefined
                     }
-                    placeholder="Email Address (optional)"
+                    placeholder="Optional"
                     value={eEmail}
                     onChange={(e) => {
                       setEEmail(e.target.value);
@@ -1192,16 +1229,21 @@ export const PropertyDetailPage: React.FC = () => {
                   )}
                 </div>
                 <div>
+                  <label
+                    htmlFor="enquiry-message"
+                    className="block text-[13px] font-medium text-[var(--text-primary)] mb-1"
+                  >
+                    Your Question *
+                  </label>
                   <textarea
                     id="enquiry-message"
                     rows={3}
                     required
-                    aria-label="Your question"
                     aria-invalid={Boolean(eFieldErrors.message)}
                     aria-describedby={
                       eFieldErrors.message ? 'enquiry-message-error' : undefined
                     }
-                    placeholder="Ask about price, floor plan, or paperwork... *"
+                    placeholder="Ask about price, floor plan, or paperwork..."
                     value={eMsg}
                     onChange={(e) => {
                       setEMsg(e.target.value);

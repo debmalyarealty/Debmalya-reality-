@@ -296,7 +296,7 @@ export const LeafletMapPicker: React.FC<LeafletMapPickerProps> = ({
 
       {results.length > 1 && (
         <div className="flex flex-col gap-1 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-2">
-          <p className="text-[12px] font-medium text-[var(--text-muted)] px-1.5">
+          <p className="text-[13px] font-medium text-[var(--text-muted)] px-1.5">
             Matching places (tap to move pin):
           </p>
           {results.slice(0, 4).map((r) => (

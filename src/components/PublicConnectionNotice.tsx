@@ -28,7 +28,7 @@ export const PublicConnectionNotice: React.FC<PublicConnectionNoticeProps> = ({
     <div
       role="status"
       aria-live="polite"
-      className={`rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)]/95 backdrop-blur-md px-4 py-2.5 shadow-[var(--shadow-subtle)] flex items-center gap-2.5 text-xs sm:text-[13px] font-medium text-[var(--text-secondary)] ${className}`}
+      className={`rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)]/95 backdrop-blur-md px-4 py-2.5 shadow-[var(--shadow-subtle)] flex items-center gap-2.5 text-[13px] font-medium text-[var(--text-secondary)] ${className}`}
     >
       {isSlow ? (
         <Clock className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />

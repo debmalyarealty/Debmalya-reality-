@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -32,6 +32,7 @@ import {
   formatReviewDate,
 } from '../lib/realtyLogic';
 import { applyDocumentMeta, buildSiteMetaTags } from '../lib/metaTags';
+import { useKeyboardSafeForm } from '../lib/formKeyboard';
 import type {
   Booking,
   CustomerPreferences,
@@ -140,6 +141,10 @@ export const CustomerDashboardPage: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Profile form
+  const profileFormRef = useRef<HTMLFormElement>(null);
+  const prefsFormRef = useRef<HTMLFormElement>(null);
+  const { keyboardOpen: profileKeyboardOpen } = useKeyboardSafeForm(profileFormRef);
+  const { keyboardOpen: prefsKeyboardOpen } = useKeyboardSafeForm(prefsFormRef);
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [phone, setPhone] = useState(user?.phone || '');
   const [city, setCity] = useState(user?.city || '');
@@ -320,7 +325,7 @@ export const CustomerDashboardPage: React.FC = () => {
   ];
 
   return (
-    <main className="fluid-container pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] lg:pb-16 min-h-[80vh] overflow-x-clip">
+    <main className="fluid-container pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] lg:pb-16 min-h-[80svh] overflow-x-clip">
       {activeTab !== 'overview' && (
         <div className="mb-4">
           <BackButton label="Back" onClick={handleBackStep} />
@@ -709,19 +714,24 @@ export const CustomerDashboardPage: React.FC = () => {
                   </h2>
                 </div>
 
-                <form onSubmit={handleProfileSave} noValidate className="space-y-4 max-w-lg">
+                <form ref={profileFormRef} onSubmit={handleProfileSave} noValidate className="space-y-4 max-w-lg">
                   <div>
-                    <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                    <label
+                      htmlFor="cust-full-name"
+                      className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                    >
                       Full name *
                     </label>
                     <input
+                      id="cust-full-name"
                       type="text"
+                      autoComplete="name"
                       value={fullName}
                       onChange={(e) => {
                         setFullName(e.target.value);
                         setProfileError(null);
                       }}
-                      className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] ${
+                      className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24 ${
                         profileError ? 'border-rose-500' : 'border-[var(--border-hairline)]'
                       }`}
                     />
@@ -733,25 +743,36 @@ export const CustomerDashboardPage: React.FC = () => {
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                      <label
+                        htmlFor="cust-phone"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
                         Phone or WhatsApp
                       </label>
                       <input
+                        id="cust-phone"
                         type="tel"
+                        inputMode="tel"
+                        autoComplete="tel"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
-                        className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums"
+                        className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums scroll-mt-24 scroll-mb-24"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                      <label
+                        htmlFor="cust-city"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
                         City
                       </label>
                       <input
+                        id="cust-city"
                         type="text"
+                        autoComplete="address-level2"
                         value={city}
                         onChange={(e) => setCity(e.target.value)}
-                        className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                        className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
                       />
                     </div>
                   </div>
@@ -759,7 +780,7 @@ export const CustomerDashboardPage: React.FC = () => {
                     <button
                       type="submit"
                       disabled={savingProfile}
-                      className="btn-primary-lux min-h-[44px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                      className="btn-primary-lux min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60 scroll-mt-24 scroll-mb-24"
                     >
                       {savingProfile && <Loader2 className="w-4 h-4 animate-spin" />}
                       <span>{savingProfile ? 'Saving...' : 'Save profile'}</span>
@@ -771,6 +792,7 @@ export const CustomerDashboardPage: React.FC = () => {
                       </span>
                     )}
                   </div>
+                  <div aria-hidden="true" className={profileKeyboardOpen ? 'h-[32dvh]' : 'hidden'} />
                 </form>
               </div>
 
@@ -784,13 +806,17 @@ export const CustomerDashboardPage: React.FC = () => {
                   </p>
                 </div>
 
-                <form onSubmit={handlePrefsSave} className="space-y-4 max-w-2xl">
+                <form ref={prefsFormRef} onSubmit={handlePrefsSave} className="space-y-4 max-w-2xl">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                      <label
+                        htmlFor="pref-area"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
                         Preferred area
                       </label>
                       <select
+                        id="pref-area"
                         value={prefs.preferred_location}
                         onChange={(e) =>
                           setPrefs((p) => ({
@@ -798,7 +824,7 @@ export const CustomerDashboardPage: React.FC = () => {
                             preferred_location: e.target.value,
                           }))
                         }
-                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                        className="w-full min-h-[48px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
                       >
                         <option value="All">Any Siliguri area</option>
                         {locations.map((l) => (
@@ -810,15 +836,19 @@ export const CustomerDashboardPage: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                      <label
+                        htmlFor="pref-category"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
                         Property category
                       </label>
                       <select
+                        id="pref-category"
                         value={prefs.property_type}
                         onChange={(e) =>
                           setPrefs((p) => ({ ...p, property_type: e.target.value }))
                         }
-                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                        className="w-full min-h-[48px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
                       >
                         <option value="All">Any category</option>
                         {propertyTypes.map((t) => (
@@ -830,10 +860,14 @@ export const CustomerDashboardPage: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                      <label
+                        htmlFor="pref-listing"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
                         For sale / For rent
                       </label>
                       <select
+                        id="pref-listing"
                         value={prefs.listing_type}
                         onChange={(e) =>
                           setPrefs((p) => ({
@@ -841,7 +875,7 @@ export const CustomerDashboardPage: React.FC = () => {
                             listing_type: e.target.value as 'Buy' | 'Rent' | 'Both',
                           }))
                         }
-                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                        className="w-full min-h-[48px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
                       >
                         <option value="Buy">For sale</option>
                         <option value="Rent">For rent</option>
@@ -852,11 +886,16 @@ export const CustomerDashboardPage: React.FC = () => {
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                      <label
+                        htmlFor="pref-min-budget"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
                         Min budget (₹)
                       </label>
                       <input
+                        id="pref-min-budget"
                         type="number"
+                        inputMode="numeric"
                         min={0}
                         value={prefs.min_budget ?? ''}
                         onChange={(e) =>
@@ -866,15 +905,20 @@ export const CustomerDashboardPage: React.FC = () => {
                           }))
                         }
                         placeholder={formatINR(2500000)}
-                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums"
+                        className="w-full min-h-[48px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums scroll-mt-24 scroll-mb-24"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                      <label
+                        htmlFor="pref-max-budget"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
                         Max budget (₹)
                       </label>
                       <input
+                        id="pref-max-budget"
                         type="number"
+                        inputMode="numeric"
                         min={0}
                         value={prefs.max_budget ?? ''}
                         onChange={(e) =>
@@ -884,14 +928,18 @@ export const CustomerDashboardPage: React.FC = () => {
                           }))
                         }
                         placeholder={formatINR(8000000)}
-                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums"
+                        className="w-full min-h-[48px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums scroll-mt-24 scroll-mb-24"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1.5">
+                      <label
+                        htmlFor="pref-min-bedrooms"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
                         Min bedrooms
                       </label>
                       <select
+                        id="pref-min-bedrooms"
                         value={prefs.min_bedrooms ?? ''}
                         onChange={(e) =>
                           setPrefs((p) => ({
@@ -899,7 +947,7 @@ export const CustomerDashboardPage: React.FC = () => {
                             min_bedrooms: e.target.value ? Number(e.target.value) : null,
                           }))
                         }
-                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                        className="w-full min-h-[48px] px-3 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
                       >
                         <option value="">Any</option>
                         <option value="1">1+ BHK</option>
@@ -914,11 +962,12 @@ export const CustomerDashboardPage: React.FC = () => {
                     <button
                       type="submit"
                       disabled={savingPrefs}
-                      className="min-h-[44px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                      className="min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60 scroll-mt-24 scroll-mb-24"
                     >
                       {savingPrefs && <Loader2 className="w-4 h-4 animate-spin" />}
                       <span>{savingPrefs ? 'Saving...' : 'Save preferences'}</span>
                     </button>
+                    <div aria-hidden="true" className={prefsKeyboardOpen ? 'h-[32dvh] w-full' : 'hidden'} />
                     {savedPrefs && (
                       <span className="text-sm font-semibold text-emerald-500 inline-flex items-center gap-1">
                         <Check className="w-4 h-4" />

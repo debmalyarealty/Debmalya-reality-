@@ -1,15 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Lock } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { signInWithEmail } from '../lib/supabaseData';
 import { applyDocumentMeta, buildSiteMetaTags } from '../lib/metaTags';
+import { useKeyboardSafeForm } from '../lib/formKeyboard';
 import { BackButton } from '../components/BackButton';
 
 export const OwnerAuthPage: React.FC = () => {
   const { user, authLoading, refreshUser, exitOwnerWebsiteView } = useApp();
   const navigate = useNavigate();
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const { keyboardOpen } = useKeyboardSafeForm(formRef);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +60,7 @@ export const OwnerAuthPage: React.FC = () => {
   };
 
   return (
-    <main className="pt-[calc(env(safe-area-inset-top,0px)+6rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] fluid-container min-h-[80vh]">
+    <main className="pt-[calc(env(safe-area-inset-top,0px)+6rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] fluid-container min-h-[80svh]">
       <div className="max-w-md mx-auto">
         <div className="mb-6">
           <BackButton />
@@ -77,7 +80,7 @@ export const OwnerAuthPage: React.FC = () => {
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label
                 htmlFor="owner-email"
@@ -88,10 +91,12 @@ export const OwnerAuthPage: React.FC = () => {
               <input
                 id="owner-email"
                 type="email"
+                inputMode="email"
+                autoComplete="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
               />
             </div>
 
@@ -105,11 +110,12 @@ export const OwnerAuthPage: React.FC = () => {
               <input
                 id="owner-password"
                 type="password"
+                autoComplete="current-password"
                 required
                 minLength={6}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+                className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
               />
             </div>
 
@@ -122,11 +128,12 @@ export const OwnerAuthPage: React.FC = () => {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
+              className="w-full min-h-[48px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-base font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60 scroll-mt-24 scroll-mb-24"
             >
               {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
               <span>{submitting ? 'Verifying...' : 'Sign In'}</span>
             </button>
+            <div aria-hidden="true" className={keyboardOpen ? 'h-[38dvh]' : 'hidden'} />
           </form>
         </div>
       </div>

@@ -75,7 +75,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
               {property.listing_type} &middot; {property.status}
             </span>
             {property.is_featured && (
-              <span className="px-2.5 py-1 rounded-full bg-amber-500 text-slate-950 text-[12px] font-semibold shadow-sm whitespace-nowrap">
+              <span className="px-2.5 py-1 rounded-full bg-amber-500 text-slate-950 text-[13px] font-semibold shadow-sm whitespace-nowrap">
                 Featured
               </span>
             )}

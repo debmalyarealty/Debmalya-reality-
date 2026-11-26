@@ -1801,7 +1801,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                       {entry.name}
                                     </p>
                                     {showUnread && (
-                                      <span className="px-2 py-0.5 rounded-md bg-[var(--bg-tint)] text-[var(--accent-primary)] text-[12px] font-semibold shrink-0">
+                                      <span className="px-2 py-0.5 rounded-md bg-[var(--bg-tint)] text-[var(--accent-primary)] text-[13px] font-semibold shrink-0">
                                         New
                                       </span>
                                     )}
@@ -2526,7 +2526,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                           type="button"
                                           aria-pressed={active}
                                           onClick={() => setPAreaUnit(unit.id)}
-                                          className={`min-h-[44px] px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                                          className={`min-h-[44px] px-2.5 rounded-lg text-[13px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                                             active
                                               ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
                                               : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -2539,7 +2539,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                   </div>
                                 </div>
                                 {Number(pArea) > 0 && (
-                                  <p className="mt-1 text-xs text-[var(--text-muted)] tabular-nums">
+                                  <p className="mt-1 text-[13px] text-[var(--text-muted)] tabular-nums">
                                     {pAreaUnit === 'katha'
                                       ? `Equals ${convertAreaInputToSqFt(pArea, 'katha').toLocaleString('en-IN')} sq ft (1 Katha = ${SQFT_PER_KATHA} sq ft)`
                                       : `Equals ${formatAreaKatha(Number(pArea))} Katha`}
@@ -3010,7 +3010,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                           {prop.is_featured && (
                                             <span
                                               title="Featured property"
-                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--accent-featured)] text-[var(--accent-featured-ink)] text-[12px] font-semibold shrink-0"
+                                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[var(--accent-featured)] text-[var(--accent-featured-ink)] text-[13px] font-semibold shrink-0"
                                             >
                                               <Star className="w-3.5 h-3.5 fill-current" />
                                               <span>Featured</span>
@@ -4157,11 +4157,11 @@ export const OwnerDashboardPage: React.FC = () => {
                                         <span className="text-sm font-semibold text-[var(--text-primary)] truncate">
                                           {svc.title}
                                         </span>
-                                        <span className="text-[12px] text-[var(--text-muted)]">
+                                        <span className="text-[13px] text-[var(--text-muted)]">
                                           {photoUrl ? 'Custom photo' : 'Coloured tile'}
                                         </span>
                                         {slotStats?.saved && (
-                                          <span className="text-[12px] font-semibold text-emerald-600 inline-flex items-center gap-1">
+                                          <span className="text-[13px] font-semibold text-emerald-600 inline-flex items-center gap-1">
                                             <Check className="w-3.5 h-3.5" />
                                             Saved
                                           </span>
@@ -4812,7 +4812,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                       {c.full_name || 'Client'}
                                     </h2>
                                     {joinedText && (
-                                      <span className="text-[12px] text-[var(--text-muted)] tabular-nums">
+                                      <span className="text-[13px] text-[var(--text-muted)] tabular-nums">
                                         Joined {joinedText}
                                       </span>
                                     )}
@@ -4837,7 +4837,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                   </div>
                                 </div>
 
-                                <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold tabular-nums shrink-0">
+                                <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold tabular-nums shrink-0">
                                   <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
                                     {activity.savedProperties.length} saved
                                   </span>
@@ -5191,7 +5191,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                   {b.property_title}
                                 </p>
                                 <span
-                                  className={`px-2 py-0.5 rounded-full border text-[12px] font-semibold ${unifiedChipStyle(
+                                  className={`px-2 py-0.5 rounded-full border text-[13px] font-semibold ${unifiedChipStyle(
                                     bookingToUnified(b.status),
                                     true
                                   )}`}
@@ -5234,7 +5234,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                   {inq.property_title || inq.interested_in}
                                 </p>
                                 <span
-                                  className={`px-2 py-0.5 rounded-full border text-[12px] font-semibold ${unifiedChipStyle(
+                                  className={`px-2 py-0.5 rounded-full border text-[13px] font-semibold ${unifiedChipStyle(
                                     inquiryToUnified(inq.status),
                                     true
                                   )}`}
@@ -5247,7 +5247,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                   {inq.message}
                                 </p>
                               )}
-                              <p className="text-[12px] text-[var(--text-muted)] tabular-nums">
+                              <p className="text-[13px] text-[var(--text-muted)] tabular-nums">
                                 {formatReviewDate(inq.created_at)}
                               </p>
                             </div>
@@ -5277,7 +5277,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                   {rev.rating} / 5 stars · {rev.customer_type}
                                 </p>
                                 <span
-                                  className={`px-2 py-0.5 rounded-full border text-[12px] font-semibold ${reviewStatusChipStyle(
+                                  className={`px-2 py-0.5 rounded-full border text-[13px] font-semibold ${reviewStatusChipStyle(
                                     rev.status
                                   )}`}
                                 >
@@ -5404,7 +5404,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
               <span>{type === 'visit' ? 'Site visit request' : 'Enquiry'}</span>
             </span>
             {isUnread && (
-              <span className="px-2 py-0.5 rounded-md bg-[var(--bg-tint)] text-[var(--accent-primary)] text-[12px] font-semibold">
+              <span className="px-2 py-0.5 rounded-md bg-[var(--bg-tint)] text-[var(--accent-primary)] text-[13px] font-semibold">
                 New
               </span>
             )}

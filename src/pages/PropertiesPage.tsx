@@ -475,7 +475,7 @@ export const PropertiesPage: React.FC = () => {
   }`;
 
   return (
-    <main className="pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] md:pb-16 fluid-container min-h-[80vh]">
+    <main className="pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] md:pb-16 fluid-container min-h-[80svh]">
       <div className="relative z-10 flex items-center justify-between gap-3 mb-3 sm:mb-5">
         <BackButton
           onClick={() => {

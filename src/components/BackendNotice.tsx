@@ -58,7 +58,7 @@ export const BackendNotice: React.FC<BackendNoticeProps> = ({
       >
         <div className="flex items-start gap-2.5 min-w-0">
           <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-          <p className="text-xs sm:text-[13px] font-medium text-[var(--text-primary)] leading-snug">
+          <p className="text-[13px] font-medium text-[var(--text-primary)] leading-snug">
             <span className="font-semibold">Supabase connection error:</span>{' '}
             <span>{checkResult.message}</span>
             {checkResult.hint ? (
@@ -89,7 +89,7 @@ export const BackendNotice: React.FC<BackendNoticeProps> = ({
     return (
       <div
         role="status"
-        className={`rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-start gap-2.5 text-xs text-[var(--text-primary)] ${className}`}
+        className={`rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-start gap-2.5 text-[13px] text-[var(--text-primary)] ${className}`}
       >
         <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
         <p className="leading-relaxed">
@@ -107,7 +107,7 @@ export const BackendNotice: React.FC<BackendNoticeProps> = ({
     >
       <div className="flex items-start gap-2.5 min-w-0">
         <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-        <div className="text-xs sm:text-[13px] font-medium text-[var(--text-primary)] leading-snug min-w-0">
+        <div className="text-[13px] font-medium text-[var(--text-primary)] leading-snug min-w-0">
           <p>
             <span className="font-semibold">Backend not configured</span> — displaying
             demo listings &amp; sample portfolio data.

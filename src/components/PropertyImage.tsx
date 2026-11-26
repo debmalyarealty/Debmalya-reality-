@@ -39,7 +39,7 @@ export const PropertyImage: React.FC<PropertyImageProps> = ({
         className={`flex flex-col items-center justify-center bg-[var(--bg-surface-muted)] text-[var(--text-muted)] px-4 text-center ${className}`}
       >
         <Building2 className="w-8 h-8 mb-2 opacity-60 text-[var(--accent-primary)]" />
-        <span className="text-xs font-medium line-clamp-2 max-w-[180px]">
+        <span className="text-[13px] font-medium line-clamp-2 max-w-[180px]">
           {alt}
         </span>
       </div>

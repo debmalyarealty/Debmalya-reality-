@@ -51,7 +51,7 @@ export const LegalPage: React.FC<LegalPageProps> = ({ type }) => {
   }, [type, settings]);
 
   return (
-    <main className="pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] md:pb-20 fluid-container min-h-[75vh]">
+    <main className="pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] md:pb-20 fluid-container min-h-[75svh]">
       <div className="max-w-4xl mx-auto space-y-8">
         <div>
           <BackButton
