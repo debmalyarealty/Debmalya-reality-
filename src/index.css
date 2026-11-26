@@ -21,7 +21,7 @@
   --cta-gold-ink: #1C1A17;
   --btn-secondary-bg: #FBF9F4;
   --btn-secondary-hover: #EDE8DF;
-  --btn-secondary-border: rgba(28, 26, 23, 0.30);
+  --btn-secondary-border: rgba(28, 26, 23, 0.36);
   --btn-secondary-text: #1C1A17;
   --border-hairline: rgba(28, 26, 23, 0.16);
   --border-input: rgba(28, 26, 23, 0.38);
@@ -51,7 +51,7 @@
   --cta-gold-ink: #16201B;
   --btn-secondary-bg: #26362E;
   --btn-secondary-hover: #31453B;
-  --btn-secondary-border: rgba(241, 236, 225, 0.38);
+  --btn-secondary-border: rgba(241, 236, 225, 0.45);
   --btn-secondary-text: #F1ECE1;
   --border-hairline: rgba(241, 236, 225, 0.18);
   --border-input: rgba(241, 236, 225, 0.40);
@@ -85,6 +85,10 @@
     font-feature-settings: "lnum" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: clip;
+  }
+
+  #root {
     overflow-x: clip;
   }
 
@@ -139,8 +143,8 @@ html body :focus-visible {
   width: 100%;
   max-width: 1200px;
   margin-inline: auto;
-  padding-left: max(clamp(0.875rem, 3.2vw, 2rem), env(safe-area-inset-left, 0px));
-  padding-right: max(clamp(0.875rem, 3.2vw, 2rem), env(safe-area-inset-right, 0px));
+  padding-left: max(clamp(1rem, 3.8vw, 2rem), env(safe-area-inset-left, 0px));
+  padding-right: max(clamp(1rem, 3.8vw, 2rem), env(safe-area-inset-right, 0px));
 }
 
 .fluid-section {
@@ -202,7 +206,7 @@ html body :focus-visible {
 @container (min-width: 540px) {
   .search-bar-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.75rem;
+    gap: 0.625rem;
   }
   .search-bar-submit {
     grid-column: span 2;
@@ -211,12 +215,11 @@ html body :focus-visible {
 
 @container (min-width: 920px) {
   .search-bar-grid {
-    grid-template-columns: 1.05fr 1.15fr 1.15fr 0.9fr auto;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.1fr) minmax(0, 1.1fr) auto auto;
     gap: 0;
   }
   .search-bar-field + .search-bar-field {
     border-left: 1px solid var(--border-input);
-    padding-left: 1.25rem;
   }
   .search-bar-submit {
     grid-column: span 1;

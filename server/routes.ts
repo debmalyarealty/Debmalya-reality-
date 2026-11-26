@@ -12,14 +12,14 @@ import {
   signSessionToken,
   verifyPassword,
   type AuthedRequest,
-} from './auth';
+} from './auth.ts';
 import {
   createNotification,
   db,
   getWebsiteSettings,
   hydrateProperties,
   UPLOADS_DIR,
-} from './db';
+} from './db.ts';
 import {
   computeRecommendations,
   doesPropertyMatchPreferences,
@@ -31,12 +31,12 @@ import {
   validateAppointmentInput,
   validateInquiryInput,
   validateReviewInput,
-} from '../src/lib/realtyLogic';
+} from '../src/lib/realtyLogic.ts';
 import type {
   CustomerPreferences,
   Property,
   WebsiteSettings,
-} from '../src/types/realty';
+} from '../src/types/realty.ts';
 
 export const apiRouter = Router();
 

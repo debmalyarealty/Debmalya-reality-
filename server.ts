@@ -2,26 +2,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express, { type Request } from 'express';
 import dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
 import {
   db,
   getWebsiteSettings,
   hydrateProperties,
   initDatabase,
   UPLOADS_DIR,
-} from './server/db';
-import { apiRouter } from './server/routes';
+} from './server/db.ts';
+import { apiRouter } from './server/routes.ts';
 import {
   injectRuntimeConfigIntoHtml,
   resolveRuntimeSupabaseConfig,
-} from './server/supabaseConfig';
+} from './server/supabaseConfig.ts';
 import {
   buildPropertyMetaTags,
   buildSiteMetaTags,
   injectMetaIntoHtml,
   resolveServerOrigin,
   type PageMetaConfig,
-} from './src/lib/metaTags';
+} from './src/lib/metaTags.ts';
 
 dotenv.config();
 dotenv.config({ path: '.env.local', override: false });
@@ -200,21 +199,68 @@ async function startServer() {
 
   app.use('/api', apiRouter);
 
-  const isProd = process.env.NODE_ENV === 'production';
+  const isExplicitDev =
+    process.env.NODE_ENV === 'development' ||
+    process.env.npm_lifecycle_event === 'dev';
+  const isProd =
+    !isExplicitDev &&
+    (process.env.NODE_ENV === 'production' ||
+      process.env.npm_lifecycle_event === 'start' ||
+      (Boolean(process.env.K_SERVICE) &&
+        !String(process.env.K_SERVICE).startsWith('ais-dev-')));
   const distDir = path.resolve(process.cwd(), 'dist');
+  const distHtmlPath = path.join(distDir, 'index.html');
 
-  if (isProd && fs.existsSync(distDir)) {
-    const distHtmlPath = path.join(distDir, 'index.html');
-    const cachedTemplate = fs.readFileSync(distHtmlPath, 'utf-8');
+  if (isProd && fs.existsSync(distHtmlPath)) {
+    let cachedMtimeMs = -1;
+    let cachedTemplate = '';
+    const readDistTemplate = () => {
+      const stat = fs.statSync(distHtmlPath);
+      if (stat.mtimeMs !== cachedMtimeMs || !cachedTemplate) {
+        cachedTemplate = fs.readFileSync(distHtmlPath, 'utf-8');
+        cachedMtimeMs = stat.mtimeMs;
+      }
+      return cachedTemplate;
+    };
+
+    app.use(
+      '/assets',
+      express.static(path.join(distDir, 'assets'), {
+        index: false,
+        maxAge: '1y',
+        immutable: true,
+      })
+    );
     app.use(express.static(distDir, { index: false }));
+
+    const staticAssetPattern =
+      /\.(?:js|mjs|cjs|css|map|json|webp|png|jpe?g|gif|svg|ico|woff2?|ttf|eot|txt|xml)$/i;
+
     app.get('*', (req, res) => {
+      if (
+        req.path.startsWith('/assets/') ||
+        req.path.startsWith('/uploads/') ||
+        req.path.startsWith('/src/') ||
+        req.path.startsWith('/api/') ||
+        staticAssetPattern.test(req.path)
+      ) {
+        res.status(404).type('text/plain').send('Not found');
+        return;
+      }
       const meta = resolvePageMetaForRequest(req);
-      const htmlWithMeta = injectMetaIntoHtml(cachedTemplate, meta);
+      const htmlWithMeta = injectMetaIntoHtml(readDistTemplate(), meta);
       const runtimeConfig = resolveRuntimeSupabaseConfig(process.env);
       const html = injectRuntimeConfigIntoHtml(htmlWithMeta, runtimeConfig);
-      res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).send(html);
+      res
+        .status(200)
+        .set({
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        })
+        .send(html);
     });
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -240,7 +286,13 @@ async function startServer() {
         const transformed = await vite.transformIndexHtml(req.originalUrl, rawHtml);
         const meta = resolvePageMetaForRequest(req);
         const finalHtml = injectMetaIntoHtml(transformed, meta);
-        res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).end(finalHtml);
+        res
+          .status(200)
+          .set({
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+          })
+          .end(finalHtml);
       } catch (err) {
         if (err instanceof Error) {
           vite.ssrFixStacktrace(err);

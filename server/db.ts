@@ -2,13 +2,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import type { Property, PropertyImage, WebsiteSettings } from '../src/types/realty';
+import type { Property, PropertyImage, WebsiteSettings } from '../src/types/realty.ts';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-export const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads');
+function ensureWritableDir(preferred: string, fallback: string): string {
+  try {
+    if (!fs.existsSync(preferred)) fs.mkdirSync(preferred, { recursive: true });
+    fs.accessSync(preferred, fs.constants.W_OK);
+    return preferred;
+  } catch {
+    if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true });
+    return fallback;
+  }
+}
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+const DATA_DIR = ensureWritableDir(
+  path.resolve(process.cwd(), 'data'),
+  '/tmp/debmalya-data'
+);
+export const UPLOADS_DIR = ensureWritableDir(
+  path.resolve(process.cwd(), 'uploads'),
+  '/tmp/debmalya-uploads'
+);
 
 const DB_PATH = path.join(DATA_DIR, 'debmalya.sqlite');
 export const db = new DatabaseSync(DB_PATH);

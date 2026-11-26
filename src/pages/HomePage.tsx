@@ -397,8 +397,8 @@ export const HomePage: React.FC = () => {
     return { items, reasonsById };
   }, [user, recommendations, activeProperties]);
 
-  const handleSmartSearch = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSmartSearch = (e?: React.FormEvent) => {
+    e?.preventDefault();
     setSearchSheetOpen(false);
     const params = new URLSearchParams();
     if (searchLocation !== 'All') params.set('location', searchLocation);
@@ -507,16 +507,16 @@ export const HomePage: React.FC = () => {
 
   return (
     <main>
-      {/* 1. ARCHITECTURAL HERO (Portrait Phones: clean 4:5 photo above text fading into canvas; Landscape Phones: side-by-side; Tablet/Desktop: full architectural bleed with >=90% opaque dark gradient backdrop) */}
+      {/* 1. ARCHITECTURAL HERO (Portrait Phones: clean 4:5 photo above text fading into canvas; Landscape Phones: 4:5 side-by-side; Tablet/Desktop: full architectural bleed with >=90% opaque dark gradient backdrop) */}
       {isLandscapeCompact ? (
         <section
           id="hero"
           ref={heroRef}
-          className="relative min-h-[85svh] flex items-center bg-[var(--bg-canvas)] pt-[calc(env(safe-area-inset-top,0px)+4.75rem)] pb-8 overflow-x-clip scroll-mt-24"
+          className="relative min-h-[min(80svh,440px)] flex items-center bg-[var(--bg-canvas)] pt-[calc(env(safe-area-inset-top,0px)+4.5rem)] pb-6 overflow-x-clip scroll-mt-24"
         >
           <div className="fluid-container w-full grid grid-cols-12 gap-5 items-center">
-            <div className="col-span-5 min-w-0">
-              <div className="relative aspect-[4/3] max-h-[68dvh] w-full rounded-2xl overflow-hidden bg-[#16201B] shadow-[var(--shadow-subtle)]">
+            <div className="col-span-5 min-w-0 flex justify-center">
+              <div className="relative aspect-[4/5] w-full max-w-[min(100%,calc(70dvh*0.8))] rounded-2xl overflow-hidden bg-[#16201B] shadow-[var(--shadow-subtle)]">
                 {localHeroSources ? (
                   <picture className="block w-full h-full">
                     <source
@@ -538,7 +538,7 @@ export const HomePage: React.FC = () => {
                       decoding="async"
                       fetchPriority="high"
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover object-center"
+                      className="w-full h-full object-cover object-[50%_50%]"
                     />
                   </picture>
                 ) : (
@@ -549,7 +549,7 @@ export const HomePage: React.FC = () => {
                     decoding="async"
                     fetchPriority="high"
                     referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover object-center"
+                    className="w-full h-full object-cover object-[50%_50%]"
                   />
                 )}
               </div>
@@ -572,7 +572,7 @@ export const HomePage: React.FC = () => {
               <div className="flex flex-wrap items-center gap-3 pt-1">
                 <Link
                   to="/properties"
-                  className="btn-primary-lux tap-press min-h-[46px] px-5 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium inline-flex items-center gap-2 whitespace-nowrap shadow-[var(--shadow-subtle)]"
+                  className="btn-primary-lux tap-press min-h-[46px] px-5 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 dark:border-[#EED6A4]/50 text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shadow-[var(--shadow-subtle)]"
                 >
                   <span>Explore properties</span>
                   <ArrowRight className="w-4 h-4" />
@@ -591,9 +591,9 @@ export const HomePage: React.FC = () => {
         <section
           id="hero"
           ref={heroRef}
-          className="relative min-h-[85svh] flex flex-col bg-[var(--bg-canvas)] pt-[env(safe-area-inset-top,0px)] pb-[clamp(2.25rem,6vw,3.5rem)] overflow-x-clip scroll-mt-24"
+          className="relative min-h-[min(74svh,640px)] flex flex-col bg-[var(--bg-canvas)] pt-[env(safe-area-inset-top,0px)] pb-[clamp(1.75rem,5vw,2.75rem)] overflow-x-clip scroll-mt-24"
         >
-          {/* Clean 4:5 photo block fading softly into page canvas at bottom; zero text over photo */}
+          {/* Clean 4:5 photo block fading softly into page canvas at bottom; heading and paragraph sit below */}
           <div
             data-testid="mobile-hero-photo-block"
             className="relative w-full aspect-[4/5] overflow-hidden bg-[#16201B]"
@@ -619,7 +619,7 @@ export const HomePage: React.FC = () => {
                   decoding="async"
                   fetchPriority="high"
                   referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover object-[50%_42%]"
+                  className="w-full h-full object-cover object-[50%_52%]"
                 />
               </picture>
             ) : (
@@ -630,16 +630,16 @@ export const HomePage: React.FC = () => {
                 decoding="async"
                 fetchPriority="high"
                 referrerPolicy="no-referrer"
-                className="w-full h-full object-cover object-[50%_42%]"
+                className="w-full h-full object-cover object-[50%_52%]"
               />
             )}
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-[#0E1512]/72 via-[#0E1512]/32 to-transparent" />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[var(--bg-canvas)] via-[var(--bg-canvas)]/72 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[#0E1512]/50 via-[#0E1512]/15 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[var(--bg-canvas)] via-[var(--bg-canvas)]/70 to-transparent" />
           </div>
 
           <div
             data-testid="mobile-hero-text-block"
-            className="fluid-container relative z-10 w-full pt-4 space-y-4"
+            className="fluid-container relative z-10 w-full pt-3 space-y-3.5"
           >
             <p className="text-sm font-medium text-[var(--accent-primary)]">
               Siliguri, West Bengal &middot; Buy, sell, rent &amp; build
@@ -661,7 +661,7 @@ export const HomePage: React.FC = () => {
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <Link
                 to="/properties"
-                className="btn-primary-lux tap-press min-h-[48px] px-6 py-3 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium inline-flex items-center gap-2 whitespace-nowrap shadow-[var(--shadow-subtle)]"
+                className="btn-primary-lux tap-press min-h-[48px] px-6 py-3 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 dark:border-[#EED6A4]/50 text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shadow-[var(--shadow-subtle)]"
               >
                 <span>Explore properties</span>
                 <ArrowRight className="w-4 h-4" />
@@ -679,7 +679,7 @@ export const HomePage: React.FC = () => {
         <section
           id="hero"
           ref={heroRef}
-          className="relative min-h-[90dvh] flex flex-col justify-end pt-[calc(env(safe-area-inset-top,0px)+6rem)] pb-[clamp(4.5rem,9vw,6.5rem)] overflow-hidden scroll-mt-24 bg-[#0E1512]"
+          className="relative min-h-[clamp(500px,74svh,690px)] flex flex-col justify-end pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[clamp(2.5rem,5vw,4rem)] overflow-hidden scroll-mt-24 bg-[#0E1512]"
         >
           <motion.div
             style={enableParallax ? { y: heroParallaxY } : undefined}
@@ -712,7 +712,7 @@ export const HomePage: React.FC = () => {
                     decoding="async"
                     fetchPriority="high"
                     referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover object-[55%_42%]"
+                    className="w-full h-full object-cover object-[55%_46%]"
                   />
                 </picture>
               ) : (
@@ -723,16 +723,17 @@ export const HomePage: React.FC = () => {
                   decoding="async"
                   fetchPriority="high"
                   referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover object-[55%_42%]"
+                  className="w-full h-full object-cover object-[55%_46%]"
                 />
               )}
             </motion.div>
-            <div className="absolute inset-0 bg-gradient-to-r from-[#0E1512]/94 via-[#0E1512]/78 to-[#0E1512]/25" />
-            <div className="absolute inset-x-0 bottom-0 h-80 bg-gradient-to-t from-[#0E1512]/94 via-[#0E1512]/60 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[#0E1512]/55 via-[#0E1512]/20 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[76%] bg-gradient-to-r from-[#0E1512]/90 via-[#0E1512]/50 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[72%] bg-gradient-to-t from-[#0E1512]/95 via-[#0E1512]/80 to-transparent" />
           </motion.div>
 
           <div className="fluid-container relative z-10 w-full">
-            <div className="max-w-4xl space-y-[clamp(1rem,2.5vw,1.5rem)]">
+            <div className="max-w-4xl space-y-[clamp(0.875rem,2.2vw,1.35rem)]">
               <motion.p
                 initial={prefersReduced ? false : { opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -742,7 +743,7 @@ export const HomePage: React.FC = () => {
                 Siliguri, West Bengal &middot; Buy, sell, rent &amp; build
               </motion.p>
 
-              <h1 className="font-display text-[clamp(2.5rem,5.8vw,5.75rem)] font-medium text-white leading-[1.03] tracking-[-0.02em] [text-shadow:0_4px_24px_rgba(0,0,0,0.8)]">
+              <h1 className="font-display text-[clamp(2.5rem,5.4vw,5.25rem)] font-medium text-white leading-[1.03] tracking-[-0.02em] [text-shadow:0_4px_24px_rgba(0,0,0,0.8)]">
                 {heroHeadlineLines.map((line, i) => (
                   <span key={line} className="block overflow-hidden pb-1">
                     <motion.span
@@ -779,14 +780,14 @@ export const HomePage: React.FC = () => {
               >
                 <Link
                   to="/properties"
-                  className="btn-primary-lux tap-press min-h-[48px] px-7 py-3 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium inline-flex items-center gap-2.5 whitespace-nowrap shadow-[var(--shadow-subtle)]"
+                  className="btn-primary-lux tap-press min-h-[48px] px-7 py-3 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-[#F5DFB0]/70 text-sm font-semibold inline-flex items-center gap-2.5 whitespace-nowrap shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
                 >
                   <span>Explore properties</span>
                   <ArrowRight className="w-4 h-4" />
                 </Link>
                 <a
                   href="#contact"
-                  className="lux-card-hover tap-press min-h-[48px] px-7 py-3 rounded-full bg-black/45 hover:bg-black/60 border border-white/60 backdrop-blur-md text-white text-sm font-medium inline-flex items-center gap-2 whitespace-nowrap shadow-[0_6px_22px_rgba(0,0,0,0.35)]"
+                  className="lux-card-hover tap-press min-h-[48px] px-7 py-3 rounded-full bg-[#0E1512]/72 hover:bg-[#0E1512]/88 border border-white/80 backdrop-blur-md text-white text-sm font-medium inline-flex items-center gap-2 whitespace-nowrap shadow-[0_8px_24px_rgba(0,0,0,0.4)]"
                 >
                   <span>Schedule consultation</span>
                 </a>
@@ -806,19 +807,16 @@ export const HomePage: React.FC = () => {
         transition={{ duration: 0.5, ease: LUX_EASE }}
         className="fluid-container relative z-20 pt-[clamp(1.75rem,4vw,2.75rem)] pb-2 scroll-mt-24"
       >
-        <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.125rem)] font-medium text-[var(--text-primary)] leading-[1.15] mb-4">
-          Search
-        </h2>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.125rem)] font-medium text-[var(--text-primary)] leading-[1.15]">
+            Search
+          </h2>
 
-        {/* Mobile Compact Smart Search Card (~140px max height) */}
-        <div
-          data-testid="mobile-smart-search-card"
-          className="md:hidden rounded-[20px] bg-[var(--bg-surface)] border border-[var(--border-input)] shadow-[var(--shadow-subtle)] p-3 space-y-2.5"
-        >
+          {/* Sleek Pill Segmented Tabs ("Buy", "Rent") on Mobile */}
           <div
             role="group"
             aria-label="Buy or rent"
-            className="grid grid-cols-2 gap-1 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-1"
+            className="md:hidden inline-grid grid-cols-2 gap-1 w-full rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-subtle)]"
           >
             <button
               type="button"
@@ -826,13 +824,14 @@ export const HomePage: React.FC = () => {
               onClick={() =>
                 setSearchListing((prev) => (prev === 'Buy' ? 'All' : 'Buy'))
               }
-              className={`tap-press min-h-[44px] rounded-lg text-sm font-medium cursor-pointer ${
+              className={`tap-press min-h-[44px] px-4 rounded-full text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer ${
                 searchListing === 'Buy'
                   ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
-                  : 'text-[var(--text-secondary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
-              Buy
+              <Home className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>Buy</span>
             </button>
             <button
               type="button"
@@ -840,46 +839,83 @@ export const HomePage: React.FC = () => {
               onClick={() =>
                 setSearchListing((prev) => (prev === 'Rent' ? 'All' : 'Rent'))
               }
-              className={`tap-press min-h-[44px] rounded-lg text-sm font-medium cursor-pointer ${
+              className={`tap-press min-h-[44px] px-4 rounded-full text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer ${
                 searchListing === 'Rent'
                   ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
-                  : 'text-[var(--text-secondary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
-              Rent
+              <KeyRound className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>Rent</span>
             </button>
           </div>
+        </div>
 
+        {/* Mobile Compact Modern Real Estate Search Bar */}
+        <div
+          data-testid="mobile-smart-search-card"
+          className="md:hidden rounded-[22px] bg-[var(--bg-surface)] border border-[var(--border-input)] shadow-[var(--shadow-subtle)] p-2.5 space-y-2.5"
+        >
           <button
             type="button"
             data-testid="mobile-smart-search-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={searchSheetOpen}
             onClick={() => setSearchSheetOpen(true)}
-            className="tap-press w-full min-h-[48px] px-3.5 py-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)]/75 flex items-center justify-between gap-3 text-left cursor-pointer"
+            className="tap-press w-full rounded-2xl bg-[var(--bg-canvas)]/75 hover:bg-[var(--bg-canvas)] border border-[var(--border-hairline)] p-2.5 grid grid-cols-1 min-[375px]:grid-cols-2 gap-2.5 text-left transition-colors cursor-pointer"
           >
-            <span className="truncate text-sm font-medium text-[var(--text-primary)]">
-              {mobileLocationLabel} &middot; {mobileTypeLabel} &middot;{' '}
-              {mobileBudgetLabel}
-            </span>
-            <Search
-              className="w-4 h-4 text-[var(--accent-primary)] shrink-0"
-              aria-hidden="true"
-            />
+            <div className="flex items-center gap-2.5 min-w-0 px-1">
+              <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium text-[var(--text-muted)] leading-tight">
+                  Location
+                </span>
+                <span className="block text-sm font-semibold text-[var(--text-primary)] truncate">
+                  {mobileLocationLabel === 'Location'
+                    ? 'All areas'
+                    : mobileLocationLabel}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 min-w-0 px-1 pt-2 min-[375px]:pt-0 border-t min-[375px]:border-t-0 min-[375px]:border-l border-[var(--border-hairline)] min-[375px]:pl-3">
+              <Home className="w-4 h-4 text-[var(--accent-primary)] shrink-0" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium text-[var(--text-muted)] leading-tight">
+                  Property type
+                </span>
+                <span className="block text-sm font-semibold text-[var(--text-primary)] truncate">
+                  {mobileTypeLabel === 'Type' ? 'All types' : mobileTypeLabel}
+                  {mobileBudgetLabel !== 'Budget' ? ` · ${mobileBudgetLabel}` : ''}
+                </span>
+              </div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSmartSearch()}
+            aria-label="Search properties"
+            className="btn-primary-lux tap-press w-full min-h-[46px] px-5 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+          >
+            <Search className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span>Search properties</span>
           </button>
         </div>
 
-        {/* Desktop Single-Row Smart Search */}
+        {/* Desktop Single-Row Modern Pill Search Bar */}
         <form
           onSubmit={handleSmartSearch}
           data-allow-floating="true"
-          className="hidden md:block search-bar-container min-w-0 max-w-full rounded-[clamp(1.25rem,3vw,2.5rem)] bg-[var(--bg-surface)] border border-[var(--border-input)] shadow-[var(--shadow-elevated)] p-[clamp(0.75rem,2vw,1rem)]"
+          className="hidden md:block search-bar-container min-w-0 max-w-full rounded-[26px] lg:rounded-full bg-[var(--bg-surface)] border border-[var(--border-input)] shadow-[var(--shadow-elevated)] p-2.5 lg:p-2"
         >
           <div className="search-bar-grid">
-            <div className="search-bar-field flex items-center gap-3 px-3 py-1.5 min-w-0">
+            <div className="search-bar-field flex items-center gap-3 px-3.5 lg:px-4 py-1.5 min-w-0 min-h-[60px]">
               <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
               <div className="min-w-0 flex-1">
                 <label
                   htmlFor="search-location"
-                  className="block text-[13px] font-medium text-[var(--text-secondary)]"
+                  className="block text-[13px] font-semibold text-[var(--text-secondary)]"
                 >
                   Location
                 </label>
@@ -890,7 +926,7 @@ export const HomePage: React.FC = () => {
                   className="w-full min-h-[44px] bg-transparent text-base font-medium text-[var(--text-primary)] focus:outline-none cursor-pointer truncate"
                 >
                   <option value="All" className="bg-[var(--bg-surface)]">
-                    All Siliguri areas
+                    All locations
                   </option>
                   {locations.map((loc) => (
                     <option
@@ -905,12 +941,12 @@ export const HomePage: React.FC = () => {
               </div>
             </div>
 
-            <div className="search-bar-field flex items-center gap-3 px-3 py-1.5 min-w-0">
+            <div className="search-bar-field flex items-center gap-3 px-3.5 lg:px-4 py-1.5 min-w-0 min-h-[60px]">
               <Home className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
               <div className="min-w-0 flex-1">
                 <label
                   htmlFor="search-type"
-                  className="block text-[13px] font-medium text-[var(--text-secondary)]"
+                  className="block text-[13px] font-semibold text-[var(--text-secondary)]"
                 >
                   Property type
                 </label>
@@ -921,7 +957,7 @@ export const HomePage: React.FC = () => {
                   className="w-full min-h-[44px] bg-transparent text-base font-medium text-[var(--text-primary)] focus:outline-none cursor-pointer truncate"
                 >
                   <option value="All" className="bg-[var(--bg-surface)]">
-                    All property types
+                    All types
                   </option>
                   {propertyTypes.map((t) => (
                     <option
@@ -936,14 +972,14 @@ export const HomePage: React.FC = () => {
               </div>
             </div>
 
-            <div className="search-bar-field flex items-center gap-3 px-3 py-1.5 min-w-0">
+            <div className="search-bar-field flex items-center gap-3 px-3.5 lg:px-4 py-1.5 min-w-0 min-h-[60px]">
               <IndianRupee className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
               <div className="min-w-0 flex-1">
                 <label
                   htmlFor="search-budget"
-                  className="block text-[13px] font-medium text-[var(--text-secondary)]"
+                  className="block text-[13px] font-semibold text-[var(--text-secondary)]"
                 >
-                  Budget range
+                  Budget
                 </label>
                 <select
                   id="search-budget"
@@ -964,41 +1000,48 @@ export const HomePage: React.FC = () => {
               </div>
             </div>
 
-            <div className="search-bar-field flex items-center gap-3 px-3 py-1.5 min-w-0">
-              <Tag className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-              <div className="min-w-0 flex-1">
-                <label
-                  htmlFor="search-listing"
-                  className="block text-[13px] font-medium text-[var(--text-secondary)]"
-                >
-                  Buy or rent
-                </label>
-                <select
-                  id="search-listing"
-                  value={searchListing}
-                  onChange={(e) =>
-                    setSearchListing(e.target.value as 'All' | 'Buy' | 'Rent')
+            <div className="search-bar-field flex items-center justify-center px-3 lg:px-3.5 py-1.5 min-w-0 min-h-[60px]">
+              <div
+                role="group"
+                aria-label="Buy or rent"
+                className="w-full inline-grid grid-cols-2 gap-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-1"
+              >
+                <button
+                  type="button"
+                  aria-pressed={searchListing === 'Buy'}
+                  onClick={() =>
+                    setSearchListing((prev) => (prev === 'Buy' ? 'All' : 'Buy'))
                   }
-                  className="w-full min-h-[44px] bg-transparent text-base font-medium text-[var(--text-primary)] focus:outline-none cursor-pointer truncate"
+                  className={`tap-press min-h-[44px] px-3.5 rounded-full text-[13px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                    searchListing === 'Buy'
+                      ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
                 >
-                  <option value="All" className="bg-[var(--bg-surface)]">
-                    Buy &amp; rent
-                  </option>
-                  <option value="Buy" className="bg-[var(--bg-surface)]">
-                    Buy property
-                  </option>
-                  <option value="Rent" className="bg-[var(--bg-surface)]">
-                    Rent property
-                  </option>
-                </select>
+                  Buy
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={searchListing === 'Rent'}
+                  onClick={() =>
+                    setSearchListing((prev) => (prev === 'Rent' ? 'All' : 'Rent'))
+                  }
+                  className={`tap-press min-h-[44px] px-3.5 rounded-full text-[13px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                    searchListing === 'Rent'
+                      ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  Rent
+                </button>
               </div>
             </div>
 
             <button
               type="submit"
-              className="search-bar-submit btn-primary-lux tap-press min-h-[48px] px-7 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+              className="search-bar-submit btn-primary-lux tap-press min-h-[52px] px-7 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap shadow-xs"
             >
-              <Search className="w-4 h-4" />
+              <Search className="w-4 h-4 shrink-0" />
               <span>Search</span>
             </button>
           </div>
@@ -1233,16 +1276,16 @@ export const HomePage: React.FC = () => {
             <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.125rem)] font-medium text-[var(--text-primary)] leading-[1.15]">
               Recommended properties
             </h2>
-            <div className="rounded-[clamp(1.25rem,3vw,1.75rem)] border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <p className="text-base text-[var(--text-secondary)]">
-                No recommended properties yet. Explore all listings or ask our Siliguri team for tailored options.
+            <div className="rounded-2xl sm:rounded-[1.75rem] border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-8 shadow-[var(--shadow-subtle)] flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-6">
+              <p className="text-base text-[var(--text-secondary)] leading-relaxed fluid-prose">
+                No recommended properties yet. Browse all active Siliguri listings or reach out for tailored suggestions.
               </p>
               <Link
                 to="/properties"
-                className="btn-primary-lux tap-press min-h-[44px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium inline-flex items-center gap-2 self-start sm:self-auto whitespace-nowrap"
+                className="btn-primary-lux tap-press w-full sm:w-auto min-h-[46px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center justify-center gap-2 shrink-0 whitespace-nowrap"
               >
                 <span>Browse properties</span>
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-4 h-4 shrink-0" />
               </Link>
             </div>
           </div>
@@ -1710,10 +1753,10 @@ export const HomePage: React.FC = () => {
               </div>
 
               {/* Quick Actions: Call, WhatsApp, Email */}
-              <div className="grid grid-cols-1 min-[360px]:grid-cols-3 gap-2.5">
+              <div className="flex flex-wrap gap-2.5">
                 <a
                   href={`tel:${phone.replace(/\s+/g, '')}`}
-                  className="tap-press min-h-[48px] px-3 py-2.5 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-2"
+                  className="tap-press flex-1 min-w-fit min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-2 whitespace-nowrap"
                 >
                   <Phone className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
                   <span>Call</span>
@@ -1724,7 +1767,7 @@ export const HomePage: React.FC = () => {
                   )}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn-primary-lux tap-press min-h-[48px] px-3 py-2.5 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium inline-flex items-center justify-center gap-2"
+                  className="btn-primary-lux tap-press flex-1 min-w-fit min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap"
                 >
                   <MessageCircle className="w-4 h-4 shrink-0" />
                   <span>WhatsApp</span>
@@ -1733,7 +1776,7 @@ export const HomePage: React.FC = () => {
                   href={`mailto:${emailAddr}?subject=${encodeURIComponent(
                     'Property inquiry — Debmalya Realty'
                   )}`}
-                  className="tap-press min-h-[48px] px-3 py-2.5 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-2"
+                  className="tap-press flex-1 min-w-fit min-h-[48px] px-4 py-2.5 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-2 whitespace-nowrap"
                 >
                   <Mail className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
                   <span>Email</span>
@@ -1741,9 +1784,9 @@ export const HomePage: React.FC = () => {
               </div>
 
               <div className="divide-y divide-[var(--border-hairline)] text-sm">
-                <div className="py-4 first:pt-0 space-y-1">
-                  <p className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <div className="py-4 first:pt-0 space-y-1.5">
+                  <p className="text-[13px] font-medium text-[var(--text-muted)] flex items-center gap-2">
+                    <MapPin className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
                     <span>Office address</span>
                   </p>
                   <p className="text-base text-[var(--text-primary)] leading-relaxed break-anywhere">
@@ -1752,59 +1795,59 @@ export const HomePage: React.FC = () => {
                 </div>
 
                 <div className="py-4 space-y-1">
-                  <p className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1.5">
-                    <Phone className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                  <p className="text-[13px] font-medium text-[var(--text-muted)] flex items-center gap-2">
+                    <Phone className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
                     <span>Phone &amp; WhatsApp</span>
                   </p>
                   <a
                     href={`tel:${phone.replace(/\s+/g, '')}`}
-                    className="min-h-[44px] font-display text-xl font-semibold tabular-nums text-[var(--text-primary)] hover:text-[var(--accent-primary)] inline-flex items-center break-anywhere"
+                    className="min-h-[44px] w-full font-display text-xl font-semibold tabular-nums text-[var(--text-primary)] hover:text-[var(--accent-primary)] flex items-center break-anywhere"
                   >
                     {phone}
                   </a>
                 </div>
 
                 <div className="py-4 space-y-1">
-                  <p className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                  <p className="text-[13px] font-medium text-[var(--text-muted)] flex items-center gap-2">
+                    <Mail className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
                     <span>Email</span>
                   </p>
                   <a
                     href={`mailto:${emailAddr}`}
-                    className="min-h-[44px] text-base font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] inline-flex items-center break-anywhere"
+                    className="min-h-[44px] w-full text-base font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] flex items-center break-anywhere"
                   >
                     {emailAddr}
                   </a>
                 </div>
 
                 <div className="py-4 last:pb-0 space-y-2.5">
-                  <p className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                  <p className="text-[13px] font-medium text-[var(--text-muted)] flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
                     <span>Opening hours</span>
                   </p>
                   <dl className="space-y-1.5 text-sm tabular-nums">
                     <div className="flex flex-wrap justify-between gap-2">
                       <dt className="text-[var(--text-secondary)]">Monday</dt>
                       <dd className="font-medium text-[var(--text-primary)]">
-                        {settings?.operating_hours.monday || '9:00 AM – 9:30 PM'}
+                        {settings?.operating_hours?.monday || '9:00 AM – 9:30 PM'}
                       </dd>
                     </div>
                     <div className="flex flex-wrap justify-between gap-2">
                       <dt className="text-[var(--text-secondary)]">Tuesday</dt>
                       <dd className="font-medium text-[var(--text-primary)]">
-                        {settings?.operating_hours.tuesday || '10:00 AM – 10:00 PM'}
+                        {settings?.operating_hours?.tuesday || '10:00 AM – 10:00 PM'}
                       </dd>
                     </div>
                     <div className="flex flex-wrap justify-between gap-2">
                       <dt className="text-[var(--text-secondary)]">Wednesday</dt>
                       <dd className="font-medium text-[var(--text-primary)]">
-                        {settings?.operating_hours.wednesday || '9:00 AM – 9:30 PM'}
+                        {settings?.operating_hours?.wednesday || '9:00 AM – 9:30 PM'}
                       </dd>
                     </div>
                     <div className="flex flex-wrap justify-between gap-2">
                       <dt className="text-[var(--text-secondary)]">Thu – Sun</dt>
                       <dd className="font-medium text-[var(--text-primary)]">
-                        {settings?.operating_hours.thursday_sunday ||
+                        {settings?.operating_hours?.thursday_sunday ||
                           '9:00 AM – 5:00 PM'}
                       </dd>
                     </div>

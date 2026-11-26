@@ -710,7 +710,7 @@ export const ReviewsCarousel: React.FC = () => {
                             }
                           }}
                           aria-label={`Rate ${num} stars`}
-                          className="tap-press h-11 w-10 inline-flex items-center justify-center rounded-full hover:bg-[var(--bg-surface-muted)] cursor-pointer"
+                          className="tap-press h-11 min-w-[44px] flex-1 inline-flex items-center justify-center rounded-full hover:bg-[var(--bg-surface-muted)] cursor-pointer"
                         >
                           <Star
                             className={`w-4 h-4 ${

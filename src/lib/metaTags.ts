@@ -1,5 +1,5 @@
-import type { Property, WebsiteSettings } from '../types/realty';
-import { formatINR } from './realtyLogic';
+import type { Property, WebsiteSettings } from '../types/realty.ts';
+import { formatINR } from './realtyLogic.ts';
 
 export const SITE_NAME = 'Debmalya Realty';
 export const DEFAULT_SITE_TITLE =

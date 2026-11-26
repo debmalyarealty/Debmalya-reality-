@@ -1465,7 +1465,7 @@ export const PropertyDetailPage: React.FC = () => {
             data-testid="property-sticky-bottom-bar"
             className="md:hidden fixed inset-x-0 bottom-0 z-30 pb-[env(safe-area-inset-bottom,0px)] bg-[var(--bg-surface)]/95 border-t border-[var(--border-hairline)] backdrop-blur-xl shadow-[0_-8px_28px_-12px_rgba(0,0,0,0.22)]"
           >
-            <div className="h-[56px] w-full pl-[max(0.875rem,env(safe-area-inset-left,0px))] pr-[max(0.875rem,env(safe-area-inset-right,0px))] flex items-center justify-between gap-3">
+            <div className="h-[56px] w-full pl-[max(1rem,env(safe-area-inset-left,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="font-display text-lg font-semibold tabular-nums text-[var(--accent-primary)] truncate leading-tight">
                   {formatINRReadable(

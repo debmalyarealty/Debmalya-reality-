@@ -4,9 +4,6 @@ import {
   Facebook,
   Instagram,
   Linkedin,
-  Mail,
-  MapPin,
-  Phone,
   Youtube,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -49,11 +46,6 @@ export const Footer: React.FC = () => {
   };
 
   const businessName = settings?.business_name || 'Debmalya Realty';
-  const contactPhone = settings?.phone || '+91 86498 58954';
-  const contactEmail = settings?.email?.trim() || 'rounakdeysarkar90@gmail.com';
-  const contactAddress =
-    settings?.address ||
-    'Sevoke Road, Ward Number 13, Dasrath Pally, Bhanu Nagar, Siliguri, West Bengal 734001.';
   const social = settings?.social_links || {
     instagram: '',
     facebook: '',
@@ -90,27 +82,6 @@ export const Footer: React.FC = () => {
                 'High-End Builder & Property Consultant | Buy • Sell • Rent with Confidence.'}
             </p>
           </div>
-
-          <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-x-6 gap-y-2 text-sm text-[var(--text-secondary)]">
-            <a
-              href={`tel:${contactPhone.replace(/\s+/g, '')}`}
-              className="min-h-[44px] inline-flex items-center gap-2 hover:text-[var(--accent-primary)] tabular-nums"
-            >
-              <Phone className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-              <span>{contactPhone}</span>
-            </a>
-            <a
-              href={`mailto:${contactEmail}`}
-              className="min-h-[44px] inline-flex items-center gap-2 hover:text-[var(--accent-primary)] break-anywhere"
-            >
-              <Mail className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-              <span>{contactEmail}</span>
-            </a>
-            <span className="min-h-[44px] inline-flex items-center gap-2 break-anywhere">
-              <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-              <span>{contactAddress}</span>
-            </span>
-          </div>
         </div>
 
         {/* Explore Navigation & Social Icons */}
@@ -119,7 +90,7 @@ export const Footer: React.FC = () => {
             <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2.5">
               Explore
             </h3>
-            <ul className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm font-medium">
+            <ul className="grid grid-cols-2 min-[420px]:grid-cols-3 md:flex md:flex-wrap md:items-center gap-x-6 gap-y-1.5 text-sm font-medium">
               <li>
                 <Link
                   to="/"

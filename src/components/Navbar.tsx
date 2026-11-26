@@ -207,11 +207,11 @@ export const Navbar: React.FC = () => {
       <header
         className={`fixed top-0 inset-x-0 z-40 w-full max-w-[100vw] overflow-x-clip transition-all duration-500 ${
           overHero
-            ? 'bg-gradient-to-b from-[#16201B]/65 via-[#16201B]/25 to-transparent pt-[calc(env(safe-area-inset-top,0px)+clamp(0.75rem,2vw,1.25rem))] pb-[clamp(0.75rem,2vw,1.25rem)]'
+            ? 'bg-gradient-to-b from-[#0E1512]/50 via-[#0E1512]/15 to-transparent pt-[calc(env(safe-area-inset-top,0px)+clamp(0.625rem,1.6vw,1rem))] pb-[clamp(0.625rem,1.6vw,1rem)]'
             : 'bg-[var(--bg-canvas)]/90 backdrop-blur-2xl shadow-[var(--shadow-subtle)] pt-[calc(env(safe-area-inset-top,0px)+0.625rem)] pb-2.5 sm:pb-3'
         }`}
       >
-        <div className="fluid-container flex items-center justify-between gap-2 pl-[max(env(safe-area-inset-left,0px),clamp(0.75rem,3vw,2rem))] pr-[max(env(safe-area-inset-right,0px),clamp(0.75rem,3vw,2rem))]">
+        <div className="fluid-container flex items-center justify-between gap-2">
           <Link
             to="/"
             onClick={() => {
@@ -242,7 +242,7 @@ export const Navbar: React.FC = () => {
                 title="Dashboard"
                 className={`h-11 w-11 inline-flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer shrink-0 ${
                   overHero
-                    ? 'bg-black/45 border border-white/40 text-white hover:bg-black/65 backdrop-blur-md'
+                    ? 'bg-[#0E1512]/60 border border-white/55 text-white hover:bg-[#0E1512]/80 backdrop-blur-md'
                     : 'bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover)]'
                 }`}
               >
@@ -263,7 +263,7 @@ export const Navbar: React.FC = () => {
                 title="Create account or log in"
                 className={`min-h-[44px] min-w-[44px] px-0 min-[420px]:px-3.5 inline-flex items-center justify-center gap-1.5 rounded-full transition-all duration-200 cursor-pointer shrink-0 whitespace-nowrap ${
                   overHero
-                    ? 'bg-black/45 border border-white/40 text-white hover:bg-black/65 backdrop-blur-md'
+                    ? 'bg-[#0E1512]/60 border border-white/55 text-white hover:bg-[#0E1512]/80 backdrop-blur-md'
                     : 'bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover)]'
                 }`}
               >
@@ -288,7 +288,7 @@ export const Navbar: React.FC = () => {
               }
               className={`h-11 w-11 inline-flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer shrink-0 ${
                 overHero
-                  ? 'bg-black/45 border border-white/40 text-white hover:bg-black/65 backdrop-blur-md'
+                  ? 'bg-[#0E1512]/60 border border-white/55 text-white hover:bg-[#0E1512]/80 backdrop-blur-md'
                   : 'bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover)]'
               }`}
             >
@@ -313,7 +313,7 @@ export const Navbar: React.FC = () => {
               aria-controls="universal-nav-drawer"
               className={`min-h-[44px] min-w-[44px] px-0 min-[420px]:px-3.5 inline-flex items-center justify-center gap-2 rounded-full transition-all duration-200 cursor-pointer shrink-0 whitespace-nowrap ${
                 overHero
-                  ? 'bg-black/45 border border-white/45 text-white hover:bg-black/65 backdrop-blur-md'
+                  ? 'bg-[#0E1512]/60 border border-white/60 text-white hover:bg-[#0E1512]/80 backdrop-blur-md'
                   : 'bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover)]'
               }`}
             >

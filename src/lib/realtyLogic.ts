@@ -6,7 +6,7 @@ import type {
   PropertyFilters,
   PropertyStatus,
   SavedSearch,
-} from '../types/realty';
+} from '../types/realty.ts';
 
 function formatPriceSuffix(
   listingType?: ListingType,
