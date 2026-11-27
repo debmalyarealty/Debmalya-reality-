@@ -16,6 +16,10 @@ import {
 } from './localCache';
 import { slugify } from './realtyLogic';
 import { mapSignInAuthError } from './authCallback';
+import {
+  extractStoragePathsFromUrls,
+  formatFriendlyActionError,
+} from './adminHelpers';
 import type {
   Agent,
   Booking,
@@ -525,7 +529,14 @@ export async function sendPasswordResetEmail(email: string): Promise<void> {
 export async function updateOwnPassword(newPassword: string): Promise<void> {
   const client = requireClient();
   const { error } = await client.auth.updateUser({ password: newPassword });
-  if (error) throw new Error(error.message);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not update password. Please try again.'
+      )
+    );
+  }
 }
 
 export async function signOutUser(): Promise<void> {
@@ -1191,7 +1202,6 @@ export async function fetchClientDashboardData(
   ]);
 
   if (favRes.error) throw new Error(favRes.error.message);
-  if (searchRes.error) throw new Error(searchRes.error.message);
   if (bookRes.error) throw new Error(bookRes.error.message);
   if (inqRes.error) throw new Error(inqRes.error.message);
   if (revRes.error) throw new Error(revRes.error.message);
@@ -1562,11 +1572,133 @@ export async function ownerTogglePropertyPublished(
   invalidateDashboardCaches();
 }
 
-export async function ownerDeleteProperty(id: string): Promise<void> {
+async function removeStorageUrlsFromBucket(
+  bucket: 'property-images' | 'team-photos',
+  urls: readonly string[]
+): Promise<void> {
+  const paths = extractStoragePathsFromUrls(urls, bucket);
+  if (paths.length === 0) return;
   const client = requireClient();
+  const { error } = await client.storage.from(bucket).remove(paths);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete property photos. Please try again.'
+      )
+    );
+  }
+}
+
+export async function ownerDeleteProperty(
+  id: string,
+  imageUrls: readonly string[] = []
+): Promise<void> {
+  const client = requireClient();
+  if (imageUrls.length > 0) {
+    await removeStorageUrlsFromBucket('property-images', imageUrls);
+  }
   const { error } = await client.from('properties').delete().eq('id', id);
-  if (error) throw new Error(error.message);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete property. Please try again.'
+      )
+    );
+  }
   invalidatePublicCaches();
+  invalidateDashboardCaches();
+}
+
+export async function ownerDeletePropertiesBulk(
+  items: ReadonlyArray<{ id: string; imageUrls: readonly string[] }>
+): Promise<void> {
+  if (items.length === 0) return;
+  const client = requireClient();
+  const allUrls = items.flatMap((item) => item.imageUrls);
+  if (allUrls.length > 0) {
+    await removeStorageUrlsFromBucket('property-images', allUrls);
+  }
+  const ids = items.map((item) => item.id);
+  const { error } = await client.from('properties').delete().in('id', ids);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete selected properties. Please try again.'
+      )
+    );
+  }
+  invalidatePublicCaches();
+  invalidateDashboardCaches();
+}
+
+export async function ownerDeleteInquiry(id: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client.from('inquiries').delete().eq('id', id);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete enquiry. Please try again.'
+      )
+    );
+  }
+  invalidateDashboardCaches();
+}
+
+export async function ownerDeleteInquiriesBulk(
+  ids: readonly string[]
+): Promise<void> {
+  if (ids.length === 0) return;
+  const client = requireClient();
+  const { error } = await client
+    .from('inquiries')
+    .delete()
+    .in('id', [...ids]);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete selected enquiries. Please try again.'
+      )
+    );
+  }
+  invalidateDashboardCaches();
+}
+
+export async function ownerDeleteBooking(id: string): Promise<void> {
+  const client = requireClient();
+  const { error } = await client.from('bookings').delete().eq('id', id);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete visit request. Please try again.'
+      )
+    );
+  }
+  invalidateDashboardCaches();
+}
+
+export async function ownerDeleteBookingsBulk(
+  ids: readonly string[]
+): Promise<void> {
+  if (ids.length === 0) return;
+  const client = requireClient();
+  const { error } = await client
+    .from('bookings')
+    .delete()
+    .in('id', [...ids]);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete selected visit requests. Please try again.'
+      )
+    );
+  }
   invalidateDashboardCaches();
 }
 
@@ -1632,9 +1764,129 @@ export async function ownerUpdateReview(
 export async function ownerDeleteReview(id: string): Promise<void> {
   const client = requireClient();
   const { error } = await client.from('reviews').delete().eq('id', id);
-  if (error) throw new Error(error.message);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete review. Please try again.'
+      )
+    );
+  }
   invalidatePublicCaches();
   invalidateDashboardCaches();
+}
+
+export async function ownerDeleteReviewsBulk(
+  ids: readonly string[]
+): Promise<void> {
+  if (ids.length === 0) return;
+  const client = requireClient();
+  const { error } = await client
+    .from('reviews')
+    .delete()
+    .in('id', [...ids]);
+  if (error) {
+    throw new Error(
+      formatFriendlyActionError(
+        error.message,
+        'Could not delete selected reviews. Please try again.'
+      )
+    );
+  }
+  invalidatePublicCaches();
+  invalidateDashboardCaches();
+}
+
+async function invokeAdminClientFunction<T = Record<string, unknown>>(
+  body: Record<string, unknown>,
+  fallbackError: string
+): Promise<T> {
+  const client = requireClient();
+
+  let {
+    data: { session },
+  } = await client.auth.getSession();
+
+  if (
+    !session?.access_token ||
+    (session.expires_at && session.expires_at * 1000 <= Date.now() + 15_000)
+  ) {
+    const { data: refreshed } = await client.auth.refreshSession();
+    if (refreshed?.session?.access_token) {
+      session = refreshed.session;
+    }
+  }
+
+  if (!session?.access_token) {
+    throw new Error('Your session expired. Please sign in again.');
+  }
+
+  const { data, error } = await client.functions.invoke<
+    T & { error?: string }
+  >('admin-client-actions', {
+    body,
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+    },
+  });
+
+  if (error) {
+    let detailedMsg = '';
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') {
+      try {
+        const parsed = (await ctx.json()) as { error?: string };
+        if (parsed?.error) detailedMsg = parsed.error;
+      } catch {
+        // ignore JSON parse failures
+      }
+    }
+    throw new Error(
+      formatFriendlyActionError(detailedMsg || error.message, fallbackError)
+    );
+  }
+
+  if (data && typeof data === 'object' && 'error' in data && data.error) {
+    throw new Error(
+      formatFriendlyActionError(String(data.error), fallbackError)
+    );
+  }
+
+  return (data ?? {}) as T;
+}
+
+export async function ownerDeleteClientsBulk(
+  clientIds: readonly string[]
+): Promise<string[]> {
+  if (clientIds.length === 0) return [];
+  const res = await invokeAdminClientFunction<{ deletedIds?: string[] }>(
+    {
+      action: 'delete-clients',
+      clientIds: [...clientIds],
+    },
+    'Could not delete client account. Please try again.'
+  );
+  invalidatePublicCaches();
+  invalidateDashboardCaches();
+  return Array.isArray(res.deletedIds) ? res.deletedIds : [...clientIds];
+}
+
+export async function ownerDeleteClient(clientId: string): Promise<void> {
+  await ownerDeleteClientsBulk([clientId]);
+}
+
+export async function ownerSetClientPassword(
+  clientId: string,
+  newPassword: string
+): Promise<void> {
+  await invokeAdminClientFunction(
+    {
+      action: 'set-client-password',
+      clientId,
+      newPassword,
+    },
+    'Could not update password. Please try again.'
+  );
 }
 
 export async function ownerSaveTeamMember(

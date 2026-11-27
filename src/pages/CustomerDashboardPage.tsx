@@ -1,19 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowRight,
   Bookmark,
   Calendar,
   Check,
   ClipboardList,
+  Copy,
+  Eye,
+  EyeOff,
   Globe,
   Home,
+  KeyRound,
   Loader2,
   LogOut,
+  RefreshCw,
   Settings,
   Star,
   User,
 } from 'lucide-react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useApp } from '../context/AppContext';
 import {
   fetchClientDashboardData,
@@ -22,10 +29,17 @@ import {
   getCachedPublicProperties,
   isClientDashboardCacheFresh,
   isPublicPropertiesCacheFresh,
+  ownerSetClientPassword,
   saveUserPreferences,
+  updateOwnPassword,
   updateOwnProfile,
   type ClientDashboardData,
 } from '../lib/supabaseData';
+import {
+  generateTemporaryPassword,
+  validateNewPassword,
+} from '../lib/adminHelpers';
+import { LUX_EASE } from '../lib/motion';
 import {
   buildSearchQueryString,
   formatINR,
@@ -39,6 +53,7 @@ import type {
   Inquiry,
   Property,
   Review,
+  UserProfile,
 } from '../types/realty';
 import { PropertyCard } from '../components/PropertyCard';
 import { BackButton } from '../components/BackButton';
@@ -106,7 +121,17 @@ function badgeToneClass(status: string): string {
   return 'bg-[var(--bg-surface-muted)] text-[var(--accent-primary)] border-[var(--border-hairline)]';
 }
 
-export const CustomerDashboardPage: React.FC = () => {
+export interface CustomerDashboardPageProps {
+  viewedProfile?: UserProfile;
+  isOwnerViewing?: boolean;
+  onBackToClients?: () => void;
+}
+
+export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
+  viewedProfile,
+  isOwnerViewing = false,
+  onBackToClients,
+}) => {
   const {
     user,
     authLoading,
@@ -116,14 +141,22 @@ export const CustomerDashboardPage: React.FC = () => {
     logout,
   } = useApp();
   const navigate = useNavigate();
+  const prefersReduced = !!useReducedMotion();
+
+  const isOwnerMode = Boolean(
+    isOwnerViewing && viewedProfile && user?.role === 'owner'
+  );
+  const targetProfile = isOwnerMode ? viewedProfile! : user;
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabKey>(() =>
-    mapClientTab(searchParams.get('tab'))
+    isOwnerMode ? 'overview' : mapClientTab(searchParams.get('tab'))
   );
 
   const initialCached =
-    user?.role === 'client' ? getCachedClientDashboardData(user.id) : null;
+    targetProfile && (isOwnerMode || targetProfile.role === 'client')
+      ? getCachedClientDashboardData(targetProfile.id)
+      : null;
 
   const [favorites, setFavorites] = useState<Property[]>(
     initialCached?.favorites ?? []
@@ -143,14 +176,34 @@ export const CustomerDashboardPage: React.FC = () => {
   // Profile form
   const profileFormRef = useRef<HTMLFormElement>(null);
   const prefsFormRef = useRef<HTMLFormElement>(null);
+  const passwordFormRef = useRef<HTMLFormElement>(null);
   const { keyboardOpen: profileKeyboardOpen } = useKeyboardSafeForm(profileFormRef);
   const { keyboardOpen: prefsKeyboardOpen } = useKeyboardSafeForm(prefsFormRef);
-  const [fullName, setFullName] = useState(user?.full_name || '');
-  const [phone, setPhone] = useState(user?.phone || '');
-  const [city, setCity] = useState(user?.city || '');
+  const { keyboardOpen: passwordKeyboardOpen } = useKeyboardSafeForm(passwordFormRef);
+  const [fullName, setFullName] = useState(targetProfile?.full_name || '');
+  const [phone, setPhone] = useState(targetProfile?.phone || '');
+  const [city, setCity] = useState(targetProfile?.city || '');
   const [profileError, setProfileError] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savedProfile, setSavedProfile] = useState(false);
+
+  // Client self-service Change Password state
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [savedPassword, setSavedPassword] = useState(false);
+
+  // Owner "Set new password" state (Edge Function + confirmation + one-time reveal)
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [showAdminPasswordInput, setShowAdminPasswordInput] = useState(false);
+  const [adminPasswordError, setAdminPasswordError] = useState<string | null>(null);
+  const [confirmAdminPasswordOpen, setConfirmAdminPasswordOpen] = useState(false);
+  const [settingAdminPassword, setSettingAdminPassword] = useState(false);
+  const [oneTimeRevealedPassword, setOneTimeRevealedPassword] = useState<string | null>(null);
+  const [copiedOneTimePw, setCopiedOneTimePw] = useState(false);
 
   // Preferences form
   const [prefs, setPrefs] = useState<CustomerPreferences>(
@@ -170,6 +223,18 @@ export const CustomerDashboardPage: React.FC = () => {
 
   useEffect(() => {
     const activeMeta = CLIENT_TABS.find((t) => t.key === activeTab);
+    if (isOwnerMode && viewedProfile) {
+      const displayName =
+        viewedProfile.full_name || viewedProfile.email || 'Client';
+      applyDocumentMeta(
+        buildSiteMetaTags({
+          title: `${displayName} (${activeMeta?.mobileLabel || 'Home'}) — Owner Dashboard`,
+          pathname: '/owner-dashboard',
+          robots: 'noindex, nofollow',
+        })
+      );
+      return;
+    }
     applyDocumentMeta(
       buildSiteMetaTags({
         title: `${activeMeta?.label || 'Home'} — My Account`,
@@ -179,11 +244,24 @@ export const CustomerDashboardPage: React.FC = () => {
         siteName: settings?.business_name,
       })
     );
-  }, [settings, activeTab]);
+  }, [settings, activeTab, isOwnerMode, viewedProfile]);
 
   useEffect(() => {
-    setActiveTab(mapClientTab(searchParams.get('tab')));
-  }, [searchParams]);
+    if (!isOwnerMode) {
+      setActiveTab(mapClientTab(searchParams.get('tab')));
+    }
+  }, [searchParams, isOwnerMode]);
+
+  useEffect(() => {
+    if (isOwnerMode) {
+      setActiveTab('overview');
+      setAdminPasswordInput('');
+      setAdminPasswordError(null);
+      setConfirmAdminPasswordOpen(false);
+      setOneTimeRevealedPassword(null);
+      setCopiedOneTimePw(false);
+    }
+  }, [isOwnerMode, viewedProfile?.id]);
 
   const applyClientData = (dashboardData: ClientDashboardData) => {
     setFavorites(dashboardData.favorites);
@@ -207,7 +285,7 @@ export const CustomerDashboardPage: React.FC = () => {
       applyClientData(dashboardData);
     } catch (err) {
       setLoadError(
-        err instanceof Error ? err.message : 'Unable to load your account details.'
+        err instanceof Error ? err.message : 'Unable to load account details.'
       );
     } finally {
       setLoadingData(false);
@@ -215,26 +293,27 @@ export const CustomerDashboardPage: React.FC = () => {
   };
 
   useEffect(() => {
-    if (user && user.role === 'client') {
-      setFullName(user.full_name || '');
-      setPhone(user.phone || '');
-      setCity(user.city || '');
-      const cached = getCachedClientDashboardData(user.id);
+    if (targetProfile && (isOwnerMode || targetProfile.role === 'client')) {
+      setFullName(targetProfile.full_name || '');
+      setPhone(targetProfile.phone || '');
+      setCity(targetProfile.city || '');
+      const cached = getCachedClientDashboardData(targetProfile.id);
       if (cached) {
         applyClientData(cached);
         setLoadingData(false);
       }
       if (
+        isOwnerMode ||
         !cached ||
-        !isClientDashboardCacheFresh(user.id) ||
+        !isClientDashboardCacheFresh(targetProfile.id) ||
         !isPublicPropertiesCacheFresh()
       ) {
-        void loadClientData(user.id, false);
+        void loadClientData(targetProfile.id, isOwnerMode);
       }
     } else if (!authLoading) {
       setLoadingData(false);
     }
-  }, [user, authLoading]);
+  }, [targetProfile?.id, isOwnerMode, authLoading]);
 
   if (authLoading) {
     return (
@@ -248,26 +327,40 @@ export const CustomerDashboardPage: React.FC = () => {
     return <Navigate to="/" replace />;
   }
 
-  if (user.role === 'owner') {
+  if (!isOwnerMode && user.role === 'owner') {
     return <Navigate to="/owner-dashboard" replace />;
   }
 
+  if (!targetProfile) {
+    return null;
+  }
+
+  const clientDisplayName =
+    targetProfile.full_name || targetProfile.email || 'Client';
+
   const switchTab = (key: TabKey) => {
     setActiveTab(key);
-    if (key === 'overview') {
-      setSearchParams({}, { replace: true });
-    } else {
-      setSearchParams({ tab: key }, { replace: true });
+    if (!isOwnerMode) {
+      if (key === 'overview') {
+        setSearchParams({}, { replace: true });
+      } else {
+        setSearchParams({ tab: key }, { replace: true });
+      }
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleBackStep = () => {
+    if (isOwnerMode && activeTab === 'overview') {
+      onBackToClients?.();
+      return;
+    }
     switchTab('overview');
   };
 
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isOwnerMode) return;
     if (!fullName.trim()) {
       setProfileError('Please enter your full name.');
       return;
@@ -275,7 +368,7 @@ export const CustomerDashboardPage: React.FC = () => {
     setProfileError(null);
     setSavingProfile(true);
     try {
-      await updateOwnProfile(user.id, { full_name: fullName, phone, city });
+      await updateOwnProfile(targetProfile.id, { full_name: fullName, phone, city });
       await refreshUser();
       setSavedProfile(true);
       window.setTimeout(() => setSavedProfile(false), 3000);
@@ -290,11 +383,98 @@ export const CustomerDashboardPage: React.FC = () => {
     }
   };
 
+  const handleOwnPasswordSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isOwnerMode) return;
+    const validationErr = validateNewPassword(newPassword, confirmPassword);
+    if (validationErr) {
+      setPasswordError(validationErr);
+      return;
+    }
+    setPasswordError(null);
+    setSavingPassword(true);
+    try {
+      await updateOwnPassword(newPassword);
+      setNewPassword('');
+      setConfirmPassword('');
+      setShowNewPassword(false);
+      setShowConfirmPassword(false);
+      setSavedPassword(true);
+      window.setTimeout(() => setSavedPassword(false), 3000);
+      showToast('Password updated', 'saved');
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not update password. Please try again.';
+      setPasswordError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+
+  const handleRequestAdminSetPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isOwnerMode) return;
+    const validationErr = validateNewPassword(adminPasswordInput);
+    if (validationErr) {
+      setAdminPasswordError(validationErr);
+      return;
+    }
+    setAdminPasswordError(null);
+    setConfirmAdminPasswordOpen(true);
+  };
+
+  const handleConfirmAdminSetPassword = async () => {
+    if (!isOwnerMode || !targetProfile) return;
+    const validationErr = validateNewPassword(adminPasswordInput);
+    if (validationErr) {
+      setAdminPasswordError(validationErr);
+      setConfirmAdminPasswordOpen(false);
+      return;
+    }
+    const candidate = adminPasswordInput;
+    setSettingAdminPassword(true);
+    try {
+      await ownerSetClientPassword(targetProfile.id, candidate);
+      setConfirmAdminPasswordOpen(false);
+      setAdminPasswordInput('');
+      setShowAdminPasswordInput(false);
+      setAdminPasswordError(null);
+      setCopiedOneTimePw(false);
+      setOneTimeRevealedPassword(candidate);
+      showToast(`New password set for ${clientDisplayName}`, 'saved');
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not update password. Please try again.';
+      setConfirmAdminPasswordOpen(false);
+      setAdminPasswordError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setSettingAdminPassword(false);
+    }
+  };
+
+  const handleCopyOneTimePassword = async () => {
+    if (!oneTimeRevealedPassword) return;
+    try {
+      await navigator.clipboard.writeText(oneTimeRevealedPassword);
+      setCopiedOneTimePw(true);
+      showToast('Password copied — share it with the client safely', 'saved');
+    } catch {
+      showToast('Please copy the password manually.', 'info');
+    }
+  };
+
   const handlePrefsSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isOwnerMode) return;
     setSavingPrefs(true);
     try {
-      const saved = await saveUserPreferences(user.id, prefs);
+      const saved = await saveUserPreferences(targetProfile.id, prefs);
       setPrefs(saved);
       setSavedPrefs(true);
       window.setTimeout(() => setSavedPrefs(false), 3000);
@@ -324,47 +504,75 @@ export const CustomerDashboardPage: React.FC = () => {
     'Land',
   ];
 
+  const OuterTag = isOwnerMode ? 'div' : 'main';
+  const outerClass = isOwnerMode
+    ? 'min-h-[70svh] overflow-x-clip'
+    : 'fluid-container pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] lg:pb-16 min-h-[80svh] overflow-x-clip';
+
   return (
-    <main className="fluid-container pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] lg:pb-16 min-h-[80svh] overflow-x-clip">
-      {activeTab !== 'overview' && (
-        <div className="mb-4">
-          <BackButton label="Back" onClick={handleBackStep} />
+    <OuterTag className={outerClass}>
+      {isOwnerMode ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5">
+          <BackButton
+            label="Back"
+            onClick={() => {
+              setOneTimeRevealedPassword(null);
+              onBackToClients?.();
+            }}
+            className="min-h-[48px]"
+          />
+          <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[var(--border-strong)] bg-[var(--bg-surface)] text-[13px] font-semibold text-[var(--accent-primary)] max-w-full truncate">
+            <User className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Viewing {clientDisplayName}</span>
+          </span>
         </div>
+      ) : (
+        activeTab !== 'overview' && (
+          <div className="mb-4">
+            <BackButton label="Back" onClick={handleBackStep} />
+          </div>
+        )
       )}
 
       {/* Clean Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-6 border-b border-[var(--border-hairline)]">
         <div className="min-w-0">
           <h1 className="font-display text-[clamp(1.65rem,4vw,2.25rem)] font-semibold text-[var(--text-primary)] break-anywhere">
-            Welcome, {user.full_name || 'Friend'}
+            {isOwnerMode
+              ? clientDisplayName
+              : `Welcome, ${targetProfile.full_name || 'Friend'}`}
           </h1>
           <p className="text-sm text-[var(--text-secondary)] mt-1 break-anywhere">
-            {user.email}
+            {targetProfile.email || 'No email on file'}
+            {isOwnerMode && targetProfile.phone ? ` · ${targetProfile.phone}` : ''}
+            {isOwnerMode && targetProfile.city ? ` · ${targetProfile.city}` : ''}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto shrink-0">
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="min-h-[44px] px-4 py-2 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer transition-colors"
-          >
-            <Globe className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-            <span>View website</span>
-          </button>
+        {!isOwnerMode && (
+          <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="min-h-[48px] px-4 py-2 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer transition-colors"
+            >
+              <Globe className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+              <span>View website</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={async () => {
-              await logout();
-              navigate('/', { replace: true });
-            }}
-            className="min-h-[44px] px-4 py-2 rounded-full border border-[var(--border-hairline)] text-[13px] font-medium text-[var(--text-primary)] hover:border-rose-500 hover:text-rose-500 inline-flex items-center gap-2 cursor-pointer transition-colors"
-          >
-            <LogOut className="w-4 h-4 shrink-0" />
-            <span>Sign out</span>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={async () => {
+                await logout();
+                navigate('/', { replace: true });
+              }}
+              className="min-h-[48px] px-4 py-2 rounded-full border border-[var(--border-hairline)] text-[13px] font-medium text-[var(--text-primary)] hover:border-rose-500 hover:text-rose-500 inline-flex items-center gap-2 cursor-pointer transition-colors"
+            >
+              <LogOut className="w-4 h-4 shrink-0" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="lg:flex lg:items-start lg:gap-8">
@@ -669,34 +877,44 @@ export const CustomerDashboardPage: React.FC = () => {
             <div className="space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[var(--text-primary)]">
-                  My saved properties
+                  {isOwnerMode ? 'Saved properties' : 'My saved properties'}
                 </h2>
-                <Link
-                  to="/properties"
-                  className="min-h-[44px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-1.5"
-                >
-                  <span>Browse properties</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
+                {!isOwnerMode && (
+                  <Link
+                    to="/properties"
+                    className="min-h-[48px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-1.5"
+                  >
+                    <span>Browse properties</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                )}
               </div>
 
               {favorites.length === 0 ? (
                 <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 text-center space-y-4">
                   <p className="text-sm text-[var(--text-secondary)]">
-                    You have not saved any properties yet. Tap the heart icon on any listing to save it here.
+                    {isOwnerMode
+                      ? 'This client has not saved any properties yet.'
+                      : 'You have not saved any properties yet. Tap the heart icon on any listing to save it here.'}
                   </p>
-                  <Link
-                    to="/properties"
-                    className="inline-flex min-h-[44px] items-center gap-2 px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold"
-                  >
-                    <span>Browse properties</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </Link>
+                  {!isOwnerMode && (
+                    <Link
+                      to="/properties"
+                      className="inline-flex min-h-[48px] items-center gap-2 px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold"
+                    >
+                      <span>Browse properties</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </Link>
+                  )}
                 </div>
               ) : (
                 <div className="fluid-grid-cards">
                   {favorites.map((p) => (
-                    <PropertyCard key={p.id} property={p} />
+                    <PropertyCard
+                      key={p.id}
+                      property={p}
+                      hideFavoriteButton={isOwnerMode}
+                    />
                   ))}
                 </div>
               )}
@@ -707,106 +925,429 @@ export const CustomerDashboardPage: React.FC = () => {
           {activeTab === 'profile' && (
             <div className="space-y-6">
               <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 space-y-5">
-                <div className="flex items-center gap-2">
-                  <User className="w-5 h-5 text-[var(--accent-primary)]" />
-                  <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-                    My profile
-                  </h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <User className="w-5 h-5 text-[var(--accent-primary)]" />
+                    <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
+                      {isOwnerMode ? 'Client profile' : 'My profile'}
+                    </h2>
+                  </div>
+                  {targetProfile.created_at && (
+                    <span className="text-[13px] text-[var(--text-muted)] tabular-nums">
+                      Joined {formatReviewDate(targetProfile.created_at)}
+                    </span>
+                  )}
                 </div>
 
-                <form ref={profileFormRef} onSubmit={handleProfileSave} noValidate className="space-y-4 max-w-lg">
-                  <div>
-                    <label
-                      htmlFor="cust-full-name"
-                      className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
-                    >
-                      Full name *
-                    </label>
-                    <input
-                      id="cust-full-name"
-                      type="text"
-                      autoComplete="name"
-                      value={fullName}
-                      onChange={(e) => {
-                        setFullName(e.target.value);
-                        setProfileError(null);
-                      }}
-                      className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24 ${
-                        profileError ? 'border-rose-500' : 'border-[var(--border-hairline)]'
-                      }`}
-                    />
-                    {profileError && (
-                      <p role="alert" className="mt-1.5 text-[13px] font-medium text-rose-500">
-                        {profileError}
+                {isOwnerMode ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Full name</p>
+                      <p className="text-base font-medium text-[var(--text-primary)] mt-0.5 break-anywhere">
+                        {targetProfile.full_name || 'Not added'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Email</p>
+                      <p className="text-base font-medium text-[var(--text-primary)] mt-0.5 break-anywhere">
+                        {targetProfile.email || 'Not added'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Phone or WhatsApp</p>
+                      <p className="text-base font-medium text-[var(--text-primary)] mt-0.5 tabular-nums">
+                        {targetProfile.phone || 'Not added'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">City</p>
+                      <p className="text-base font-medium text-[var(--text-primary)] mt-0.5">
+                        {targetProfile.city || 'Siliguri'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <form ref={profileFormRef} onSubmit={handleProfileSave} noValidate className="space-y-4 max-w-lg">
+                    <div>
+                      <label
+                        htmlFor="cust-full-name"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
+                        Full name *
+                      </label>
+                      <input
+                        id="cust-full-name"
+                        type="text"
+                        autoComplete="name"
+                        value={fullName}
+                        onChange={(e) => {
+                          setFullName(e.target.value);
+                          setProfileError(null);
+                        }}
+                        className={`w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24 ${
+                          profileError ? 'border-rose-500' : 'border-[var(--border-hairline)]'
+                        }`}
+                      />
+                      {profileError && (
+                        <p role="alert" className="mt-1.5 text-[13px] font-medium text-rose-500">
+                          {profileError}
+                        </p>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label
+                          htmlFor="cust-phone"
+                          className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                        >
+                          Phone or WhatsApp
+                        </label>
+                        <input
+                          id="cust-phone"
+                          type="tel"
+                          inputMode="tel"
+                          autoComplete="tel"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums scroll-mt-24 scroll-mb-24"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="cust-city"
+                          className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                        >
+                          City
+                        </label>
+                        <input
+                          id="cust-city"
+                          type="text"
+                          autoComplete="address-level2"
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="submit"
+                        disabled={savingProfile}
+                        className="btn-primary-lux min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60 scroll-mt-24 scroll-mb-24"
+                      >
+                        {savingProfile && <Loader2 className="w-4 h-4 animate-spin" />}
+                        <span>{savingProfile ? 'Saving...' : 'Save profile'}</span>
+                      </button>
+                      {savedProfile && (
+                        <span className="text-sm font-semibold text-emerald-500 inline-flex items-center gap-1">
+                          <Check className="w-4 h-4" />
+                          Saved
+                        </span>
+                      )}
+                    </div>
+                    <div aria-hidden="true" className={profileKeyboardOpen ? 'h-[32dvh]' : 'hidden'} />
+                  </form>
+                )}
+              </div>
+
+              {/* Password Management (Client: Change password | Owner viewing client: Set new password) */}
+              {isOwnerMode ? (
+                <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 space-y-5">
+                  <div className="flex items-start gap-2.5">
+                    <KeyRound className="w-5 h-5 text-[var(--accent-primary)] shrink-0 mt-1" />
+                    <div>
+                      <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
+                        Set new password
+                      </h2>
+                      <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">
+                        Create a new sign-in password for {clientDisplayName}. It is never stored in plain text and will only be shown once after confirmation so you can share it directly.
+                      </p>
+                    </div>
+                  </div>
+
+                  <form
+                    onSubmit={handleRequestAdminSetPassword}
+                    noValidate
+                    className="space-y-4 max-w-lg"
+                  >
+                    <div>
+                      <label
+                        htmlFor="owner-set-client-password"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
+                        New password (minimum 8 characters)
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          id="owner-set-client-password"
+                          type={showAdminPasswordInput ? 'text' : 'password'}
+                          autoComplete="new-password"
+                          value={adminPasswordInput}
+                          onChange={(e) => {
+                            setAdminPasswordInput(e.target.value);
+                            setAdminPasswordError(null);
+                          }}
+                          placeholder="Enter or generate a new password"
+                          className={`w-full min-h-[48px] pl-3.5 pr-12 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] ${
+                            adminPasswordError
+                              ? 'border-rose-500'
+                              : 'border-[var(--border-hairline)]'
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowAdminPasswordInput((v) => !v)}
+                          aria-label={
+                            showAdminPasswordInput
+                              ? 'Hide password'
+                              : 'Show password'
+                          }
+                          className="absolute right-0 top-0 h-[48px] w-[48px] inline-flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                        >
+                          {showAdminPasswordInput ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                      {adminPasswordError && (
+                        <p
+                          role="alert"
+                          className="mt-1.5 text-[13px] font-medium text-rose-500"
+                        >
+                          {adminPasswordError}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <button
+                        type="submit"
+                        disabled={settingAdminPassword}
+                        className="btn-primary-lux min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                      >
+                        <KeyRound className="w-4 h-4" />
+                        <span>Set new password</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdminPasswordInput(generateTemporaryPassword(12));
+                          setShowAdminPasswordInput(true);
+                          setAdminPasswordError(null);
+                        }}
+                        className="min-h-[48px] px-4 py-2 rounded-full border border-[var(--border-hairline)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <RefreshCw className="w-4 h-4 text-[var(--accent-primary)]" />
+                        <span>Generate</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 space-y-5">
+                  <div className="flex items-start gap-2.5">
+                    <KeyRound className="w-5 h-5 text-[var(--accent-primary)] shrink-0 mt-1" />
+                    <div>
+                      <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
+                        Change password
+                      </h2>
+                      <p className="text-[13px] text-[var(--text-secondary)] mt-0.5">
+                        Choose a strong password with at least 8 characters.
+                      </p>
+                    </div>
+                  </div>
+
+                  <form
+                    ref={passwordFormRef}
+                    onSubmit={handleOwnPasswordSave}
+                    noValidate
+                    className="space-y-4 max-w-lg"
+                  >
+                    <div>
+                      <label
+                        htmlFor="cust-new-password"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
+                        New password
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          id="cust-new-password"
+                          type={showNewPassword ? 'text' : 'password'}
+                          autoComplete="new-password"
+                          value={newPassword}
+                          onChange={(e) => {
+                            setNewPassword(e.target.value);
+                            setPasswordError(null);
+                          }}
+                          placeholder="Minimum 8 characters"
+                          className={`w-full min-h-[48px] pl-3.5 pr-12 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24 ${
+                            passwordError
+                              ? 'border-rose-500'
+                              : 'border-[var(--border-hairline)]'
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword((v) => !v)}
+                          aria-label={
+                            showNewPassword
+                              ? 'Hide new password'
+                              : 'Show new password'
+                          }
+                          className="absolute right-0 top-0 h-[48px] w-[48px] inline-flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                        >
+                          {showNewPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="cust-confirm-password"
+                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+                      >
+                        Confirm new password
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          id="cust-confirm-password"
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          autoComplete="new-password"
+                          value={confirmPassword}
+                          onChange={(e) => {
+                            setConfirmPassword(e.target.value);
+                            setPasswordError(null);
+                          }}
+                          placeholder="Re-enter new password"
+                          className={`w-full min-h-[48px] pl-3.5 pr-12 py-2.5 rounded-xl border bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24 ${
+                            passwordError
+                              ? 'border-rose-500'
+                              : 'border-[var(--border-hairline)]'
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmPassword((v) => !v)}
+                          aria-label={
+                            showConfirmPassword
+                              ? 'Hide confirm password'
+                              : 'Show confirm password'
+                          }
+                          className="absolute right-0 top-0 h-[48px] w-[48px] inline-flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                        >
+                          {showConfirmPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {passwordError && (
+                      <p
+                        role="alert"
+                        className="text-[13px] font-medium text-rose-500"
+                      >
+                        {passwordError}
                       </p>
                     )}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label
-                        htmlFor="cust-phone"
-                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="submit"
+                        disabled={savingPassword}
+                        className="btn-primary-lux min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60 scroll-mt-24 scroll-mb-24"
                       >
-                        Phone or WhatsApp
-                      </label>
-                      <input
-                        id="cust-phone"
-                        type="tel"
-                        inputMode="tel"
-                        autoComplete="tel"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums scroll-mt-24 scroll-mb-24"
-                      />
+                        {savingPassword && (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        )}
+                        <span>
+                          {savingPassword ? 'Updating...' : 'Change password'}
+                        </span>
+                      </button>
+                      {savedPassword && (
+                        <span className="text-sm font-semibold text-emerald-500 inline-flex items-center gap-1">
+                          <Check className="w-4 h-4" />
+                          Updated
+                        </span>
+                      )}
                     </div>
-                    <div>
-                      <label
-                        htmlFor="cust-city"
-                        className="block text-[13px] font-medium text-[var(--text-secondary)] mb-1.5"
-                      >
-                        City
-                      </label>
-                      <input
-                        id="cust-city"
-                        type="text"
-                        autoComplete="address-level2"
-                        value={city}
-                        onChange={(e) => setCity(e.target.value)}
-                        className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] scroll-mt-24 scroll-mb-24"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="submit"
-                      disabled={savingProfile}
-                      className="btn-primary-lux min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer disabled:opacity-60 scroll-mt-24 scroll-mb-24"
-                    >
-                      {savingProfile && <Loader2 className="w-4 h-4 animate-spin" />}
-                      <span>{savingProfile ? 'Saving...' : 'Save profile'}</span>
-                    </button>
-                    {savedProfile && (
-                      <span className="text-sm font-semibold text-emerald-500 inline-flex items-center gap-1">
-                        <Check className="w-4 h-4" />
-                        Saved
-                      </span>
-                    )}
-                  </div>
-                  <div aria-hidden="true" className={profileKeyboardOpen ? 'h-[32dvh]' : 'hidden'} />
-                </form>
-              </div>
+                    <div
+                      aria-hidden="true"
+                      className={passwordKeyboardOpen ? 'h-[32dvh]' : 'hidden'}
+                    />
+                  </form>
+                </div>
+              )}
 
               <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 sm:p-6 space-y-5">
                 <div>
                   <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-                    What kind of property are you looking for?
+                    {isOwnerMode
+                      ? 'Client property preferences'
+                      : 'What kind of property are you looking for?'}
                   </h2>
                   <p className="text-[13px] text-[var(--text-secondary)] mt-1">
-                    Save your preferences so recommended properties match what you want.
+                    {isOwnerMode
+                      ? 'Saved preferences chosen by this client.'
+                      : 'Save your preferences so recommended properties match what you want.'}
                   </p>
                 </div>
 
-                <form ref={prefsFormRef} onSubmit={handlePrefsSave} className="space-y-4 max-w-2xl">
+                {isOwnerMode ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-2xl">
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Preferred area</p>
+                      <p className="text-sm font-semibold text-[var(--text-primary)] mt-0.5">
+                        {prefs.preferred_location === 'All' ? 'Any Siliguri area' : prefs.preferred_location}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Property category</p>
+                      <p className="text-sm font-semibold text-[var(--text-primary)] mt-0.5">
+                        {prefs.property_type === 'All' ? 'Any category' : prefs.property_type}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Looking for</p>
+                      <p className="text-sm font-semibold text-[var(--text-primary)] mt-0.5">
+                        {prefs.listing_type === 'Buy'
+                          ? 'For sale'
+                          : prefs.listing_type === 'Rent'
+                          ? 'For rent'
+                          : 'Both'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Min budget</p>
+                      <p className="text-sm font-semibold text-[var(--text-primary)] mt-0.5 tabular-nums">
+                        {prefs.min_budget ? formatINR(prefs.min_budget) : 'No minimum'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Max budget</p>
+                      <p className="text-sm font-semibold text-[var(--text-primary)] mt-0.5 tabular-nums">
+                        {prefs.max_budget ? formatINR(prefs.max_budget) : 'No limit'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
+                      <p className="text-[12px] font-medium text-[var(--text-muted)]">Min bedrooms</p>
+                      <p className="text-sm font-semibold text-[var(--text-primary)] mt-0.5">
+                        {prefs.min_bedrooms ? `${prefs.min_bedrooms}+ BHK` : 'Any'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <form ref={prefsFormRef} onSubmit={handlePrefsSave} className="space-y-4 max-w-2xl">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
                       <label
@@ -996,7 +1537,8 @@ export const CustomerDashboardPage: React.FC = () => {
                       <ArrowRight className="w-4 h-4 text-[var(--accent-primary)]" />
                     </button>
                   </div>
-                </form>
+                  </form>
+                )}
               </div>
             </div>
           )}
@@ -1031,6 +1573,138 @@ export const CustomerDashboardPage: React.FC = () => {
           );
         })}
       </nav>
-    </main>
+
+      {/* Confirmation Sheet for Owner Setting Client Password */}
+      <AnimatePresence>
+        {confirmAdminPasswordOpen && isOwnerMode && (
+          <motion.div
+            key="admin-set-pw-confirm-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm setting new client password"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.22, ease: LUX_EASE }}
+            onClick={() => {
+              if (!settingAdminPassword) setConfirmAdminPasswordOpen(false);
+            }}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4"
+          >
+            <motion.div
+              key="admin-set-pw-confirm-sheet"
+              initial={prefersReduced ? { opacity: 0 } : { opacity: 0, y: 28 }}
+              animate={prefersReduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
+              exit={prefersReduced ? { opacity: 0 } : { opacity: 0, y: 24 }}
+              transition={{ duration: 0.24, ease: LUX_EASE }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 space-y-4"
+            >
+              <div className="flex items-start gap-3">
+                <div className="h-10 w-10 rounded-full bg-[var(--bg-tint)] text-[var(--accent-primary)] flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-display text-xl font-semibold text-[var(--text-primary)]">
+                    Set new password?
+                  </h3>
+                  <p className="text-sm text-[var(--text-secondary)] mt-1 break-anywhere">
+                    Replace the login password for {clientDisplayName}? Their old password will stop working immediately.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  disabled={settingAdminPassword}
+                  onClick={() => setConfirmAdminPasswordOpen(false)}
+                  className="min-h-[48px] px-4 rounded-full border border-[var(--border-hairline)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={settingAdminPassword}
+                  onClick={() => void handleConfirmAdminSetPassword()}
+                  className="min-h-[48px] px-5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  {settingAdminPassword && (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  )}
+                  <span>{settingAdminPassword ? 'Updating...' : 'Confirm'}</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* One-time Password Reveal Sheet (never persisted anywhere) */}
+      <AnimatePresence>
+        {oneTimeRevealedPassword && isOwnerMode && (
+          <motion.div
+            key="admin-set-pw-reveal-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label="New client password"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.22, ease: LUX_EASE }}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4"
+          >
+            <motion.div
+              key="admin-set-pw-reveal-sheet"
+              initial={prefersReduced ? { opacity: 0 } : { opacity: 0, y: 28 }}
+              animate={prefersReduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
+              exit={prefersReduced ? { opacity: 0 } : { opacity: 0, y: 24 }}
+              transition={{ duration: 0.24, ease: LUX_EASE }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 space-y-4"
+            >
+              <div className="space-y-1">
+                <h3 className="font-display text-xl font-semibold text-[var(--text-primary)]">
+                  Password updated
+                </h3>
+                <p className="text-sm text-[var(--text-secondary)] break-anywhere">
+                  Share this password with {clientDisplayName} now. It is shown once and will not be saved or displayed again.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-[var(--border-strong)] bg-[var(--bg-canvas)] px-4 py-3 flex items-center justify-between gap-2">
+                <code className="font-mono text-base font-semibold text-[var(--text-primary)] select-all break-anywhere">
+                  {oneTimeRevealedPassword}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyOneTimePassword()}
+                  className="min-h-[48px] px-3.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  {copiedOneTimePw ? (
+                    <Check className="w-4 h-4 text-emerald-500" />
+                  ) : (
+                    <Copy className="w-4 h-4 text-[var(--accent-primary)]" />
+                  )}
+                  <span>{copiedOneTimePw ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOneTimeRevealedPassword(null);
+                    setCopiedOneTimePw(false);
+                  }}
+                  className="w-full min-h-[48px] px-5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </OuterTag>
   );
 };

@@ -13,12 +13,14 @@ interface PropertyCardProps {
   property: Property;
   recommendationReasons?: string[];
   className?: string;
+  hideFavoriteButton?: boolean;
 }
 
 export const PropertyCard: React.FC<PropertyCardProps> = ({
   property,
   recommendationReasons,
   className = '',
+  hideFavoriteButton = false,
 }) => {
   const { favoriteIds, toggleFavorite } = useApp();
   const navigate = useNavigate();
@@ -81,15 +83,17 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
             )}
           </div>
 
-          <FavoriteButton
-            isFavorite={isFav}
-            onToggle={() => toggleFavorite(property.id)}
-            ariaLabel={
-              isFav
-                ? `Remove ${property.title} from saved properties`
-                : `Save ${property.title} to favourites`
-            }
-          />
+          {!hideFavoriteButton && (
+            <FavoriteButton
+              isFavorite={isFav}
+              onToggle={() => toggleFavorite(property.id)}
+              ariaLabel={
+                isFav
+                  ? `Remove ${property.title} from saved properties`
+                  : `Save ${property.title} to favourites`
+              }
+            />
+          )}
         </div>
 
         {property.is_demo && (

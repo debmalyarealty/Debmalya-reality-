@@ -43,8 +43,16 @@ import {
   fetchOwnerDashboardData,
   getCachedOwnerDashboardData,
   isOwnerDashboardCacheFresh,
+  ownerDeleteBooking,
+  ownerDeleteBookingsBulk,
+  ownerDeleteClient,
+  ownerDeleteClientsBulk,
+  ownerDeleteInquiriesBulk,
+  ownerDeleteInquiry,
+  ownerDeletePropertiesBulk,
   ownerDeleteProperty,
   ownerDeleteReview,
+  ownerDeleteReviewsBulk,
   ownerDeleteTeamMember,
   ownerMarkInquiryRead,
   ownerSaveProperty,
@@ -55,10 +63,13 @@ import {
   ownerUpdateBooking,
   ownerUpdateInquiry,
   ownerUpdateReview,
-  sendPasswordResetEmail,
   uploadStorageImage,
   type OwnerDashboardData,
 } from '../lib/supabaseData';
+import {
+  buildWhatsappChatHref,
+  filterClientsBySearch,
+} from '../lib/adminHelpers';
 import {
   buildEnquiriesCsv,
   convertAreaInputToSqFt,
@@ -84,6 +95,7 @@ import { BackendNotice } from '../components/BackendNotice';
 import { BackButton } from '../components/BackButton';
 import { LeafletMapPicker } from '../components/LeafletMapPicker';
 import { PropertyImage } from '../components/PropertyImage';
+import { CustomerDashboardPage } from './CustomerDashboardPage';
 import type {
   Agent,
   Booking,
@@ -326,14 +338,18 @@ export const OwnerDashboardPage: React.FC = () => {
   >('all');
 
   // Clients tab interaction state
-  const [expandedClientId, setExpandedClientId] = useState<string | null>(null);
-  const [detailClient, setDetailClient] = useState<UserProfile | null>(null);
-  const [resettingClientId, setResettingClientId] = useState<string | null>(
-    null
-  );
-  const [resetSentClientIds, setResetSentClientIds] = useState<
-    Record<string, boolean>
-  >({});
+  const [viewingClient, setViewingClient] = useState<UserProfile | null>(null);
+  const [clientSearch, setClientSearch] = useState('');
+
+  // Multi-select bulk delete state per admin list
+  const [propSelectMode, setPropSelectMode] = useState(false);
+  const [selectedPropIds, setSelectedPropIds] = useState<string[]>([]);
+  const [enqSelectMode, setEnqSelectMode] = useState(false);
+  const [selectedEnqKeys, setSelectedEnqKeys] = useState<string[]>([]);
+  const [revSelectMode, setRevSelectMode] = useState(false);
+  const [selectedRevIds, setSelectedRevIds] = useState<string[]>([]);
+  const [clientSelectMode, setClientSelectMode] = useState(false);
+  const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
 
   // Settings accordion state (Service photos)
   const [openServicePhotoKey, setOpenServicePhotoKey] = useState<string | null>(
@@ -490,6 +506,10 @@ export const OwnerDashboardPage: React.FC = () => {
     setAgents(data.agents);
     setClients(data.clients);
     setSiteSettings(data.settings);
+    setViewingClient((prev) => {
+      if (!prev) return null;
+      return data.clients.find((c) => c.id === prev.id) || null;
+    });
   };
 
   const loadAll = async (force = false) => {
@@ -587,6 +607,11 @@ export const OwnerDashboardPage: React.FC = () => {
     return reviews.filter((r) => r.status === revFilter);
   }, [reviews, revFilter]);
 
+  const filteredClients = useMemo(
+    () => filterClientsBySearch(clients, clientSearch),
+    [clients, clientSearch]
+  );
+
   const propertyById = useMemo(() => {
     const map = new Map<string, Property>();
     for (const p of properties) {
@@ -680,6 +705,15 @@ export const OwnerDashboardPage: React.FC = () => {
   )}`;
 
   const switchOwnerTab = (key: OwnerTab) => {
+    setViewingClient(null);
+    setPropSelectMode(false);
+    setSelectedPropIds([]);
+    setEnqSelectMode(false);
+    setSelectedEnqKeys([]);
+    setRevSelectMode(false);
+    setSelectedRevIds([]);
+    setClientSelectMode(false);
+    setSelectedClientIds([]);
     setTab(key);
     if (key === 'overview') {
       setSearchParams({}, { replace: true });
@@ -777,6 +811,10 @@ export const OwnerDashboardPage: React.FC = () => {
   const handleBackStep = () => {
     if (confirmDialog && !confirmBusy) {
       setConfirmDialog(null);
+    }
+    if (viewingClient) {
+      setViewingClient(null);
+      return;
     }
     setShowPropForm(false);
     setEditingPropId(null);
@@ -1228,13 +1266,48 @@ export const OwnerDashboardPage: React.FC = () => {
   };
 
   const requestDeleteProperty = (prop: Property) => {
+    const imageUrls = prop.images.map((img) => img.url);
     setConfirmDialog({
       title: 'Delete property?',
-      message: `Remove "${prop.title}"? This cannot be undone.`,
+      message: `Permanently delete "${prop.title}"? This cannot be undone.`,
       confirmLabel: 'Delete',
       onConfirm: async () => {
-        await ownerDeleteProperty(prop.id);
-        showToast('Property removed', 'removed');
+        await ownerDeleteProperty(prop.id, imageUrls);
+        setProperties((prev) => prev.filter((item) => item.id !== prop.id));
+        setSelectedPropIds((prev) => prev.filter((id) => id !== prop.id));
+        showToast('Property permanently deleted', 'removed');
+        await loadAll(true);
+      },
+    });
+  };
+
+  const requestBulkDeleteProperties = () => {
+    const idSet = new Set(selectedPropIds);
+    const selected = properties.filter((p) => idSet.has(p.id));
+    if (selected.length === 0) return;
+    const previewNames = selected
+      .slice(0, 2)
+      .map((p) => `"${p.title}"`)
+      .join(', ');
+    const remainder = selected.length > 2 ? ` and ${selected.length - 2} more` : '';
+    setConfirmDialog({
+      title: `Delete ${selected.length} ${selected.length === 1 ? 'property' : 'properties'}?`,
+      message: `Permanently delete ${previewNames}${remainder}? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        await ownerDeletePropertiesBulk(
+          selected.map((p) => ({
+            id: p.id,
+            imageUrls: p.images.map((img) => img.url),
+          }))
+        );
+        setProperties((prev) => prev.filter((p) => !idSet.has(p.id)));
+        setSelectedPropIds([]);
+        setPropSelectMode(false);
+        showToast(
+          `${selected.length} ${selected.length === 1 ? 'property' : 'properties'} deleted`,
+          'removed'
+        );
         await loadAll(true);
       },
     });
@@ -1291,29 +1364,6 @@ export const OwnerDashboardPage: React.FC = () => {
     }
   };
 
-  const handleSendClientResetEmail = async (client: UserProfile) => {
-    const cleanEmail = (client.email || '').trim();
-    if (!cleanEmail) {
-      showToast('This client account does not have an email address.', 'error');
-      return;
-    }
-    setResettingClientId(client.id);
-    try {
-      await sendPasswordResetEmail(cleanEmail);
-      setResetSentClientIds((prev) => ({ ...prev, [client.id]: true }));
-      showToast(`Password reset email sent to ${cleanEmail}`, 'saved');
-    } catch (err) {
-      showToast(
-        err instanceof Error
-          ? err.message
-          : 'Unable to send password reset email right now.',
-        'error'
-      );
-    } finally {
-      setResettingClientId(null);
-    }
-  };
-
   const handleBookingUpdate = async (
     id: string,
     status: BookingStatus,
@@ -1329,6 +1379,75 @@ export const OwnerDashboardPage: React.FC = () => {
         'error'
       );
     }
+  };
+
+  const requestDeleteEnquiryEntry = (entry: {
+    kind: 'enquiry' | 'visit';
+    id: string;
+    name: string;
+    subject: string;
+  }) => {
+    const key = `${entry.kind}:${entry.id}`;
+    setConfirmDialog({
+      title: entry.kind === 'visit' ? 'Delete visit request?' : 'Delete enquiry?',
+      message: `Permanently delete ${
+        entry.kind === 'visit' ? 'visit request' : 'enquiry'
+      } from "${entry.name}" (${entry.subject})? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        if (entry.kind === 'visit') {
+          await ownerDeleteBooking(entry.id);
+          setBookings((prev) => prev.filter((b) => b.id !== entry.id));
+        } else {
+          await ownerDeleteInquiry(entry.id);
+          setInquiries((prev) => prev.filter((i) => i.id !== entry.id));
+        }
+        setSelectedEnqKeys((prev) => prev.filter((k) => k !== key));
+        showToast(
+          entry.kind === 'visit' ? 'Visit request deleted' : 'Enquiry deleted',
+          'removed'
+        );
+        await loadAll(true);
+      },
+    });
+  };
+
+  const requestBulkDeleteEnquiries = () => {
+    if (selectedEnqKeys.length === 0) return;
+    const count = selectedEnqKeys.length;
+    setConfirmDialog({
+      title: `Delete ${count} selected ${count === 1 ? 'item' : 'items'}?`,
+      message: `Permanently delete ${count} enquiries or visit requests? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        const enqIds = selectedEnqKeys
+          .filter((k) => k.startsWith('inq:'))
+          .map((k) => k.slice(4));
+        const visitIds = selectedEnqKeys
+          .filter((k) => k.startsWith('visit:'))
+          .map((k) => k.slice(6));
+
+        await Promise.all([
+          enqIds.length > 0 ? ownerDeleteInquiriesBulk(enqIds) : Promise.resolve(),
+          visitIds.length > 0
+            ? ownerDeleteBookingsBulk(visitIds)
+            : Promise.resolve(),
+        ]);
+
+        if (enqIds.length > 0) {
+          const eSet = new Set(enqIds);
+          setInquiries((prev) => prev.filter((i) => !eSet.has(i.id)));
+        }
+        if (visitIds.length > 0) {
+          const vSet = new Set(visitIds);
+          setBookings((prev) => prev.filter((b) => !vSet.has(b.id)));
+        }
+        setSelectedEnqKeys([]);
+        setEnqSelectMode(false);
+        showToast(`${count} ${count === 1 ? 'item' : 'items'} deleted`, 'removed');
+        await loadAll(true);
+      },
+    });
   };
 
   const handleReviewUpdate = async (
@@ -1361,11 +1480,76 @@ export const OwnerDashboardPage: React.FC = () => {
   const requestDeleteReview = (rev: Review) => {
     setConfirmDialog({
       title: 'Delete review?',
-      message: `Remove review by "${rev.reviewer_name}"?`,
+      message: `Permanently delete review by "${rev.reviewer_name}"? This cannot be undone.`,
       confirmLabel: 'Delete',
       onConfirm: async () => {
         await ownerDeleteReview(rev.id);
+        setReviews((prev) => prev.filter((r) => r.id !== rev.id));
+        setSelectedRevIds((prev) => prev.filter((id) => id !== rev.id));
         showToast('Review deleted', 'removed');
+        await loadAll(true);
+      },
+    });
+  };
+
+  const requestBulkDeleteReviews = () => {
+    if (selectedRevIds.length === 0) return;
+    const count = selectedRevIds.length;
+    setConfirmDialog({
+      title: `Delete ${count} ${count === 1 ? 'review' : 'reviews'}?`,
+      message: `Permanently delete ${count} selected ${
+        count === 1 ? 'review' : 'reviews'
+      }? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        const idSet = new Set(selectedRevIds);
+        await ownerDeleteReviewsBulk(selectedRevIds);
+        setReviews((prev) => prev.filter((r) => !idSet.has(r.id)));
+        setSelectedRevIds([]);
+        setRevSelectMode(false);
+        showToast(`${count} ${count === 1 ? 'review' : 'reviews'} deleted`, 'removed');
+        await loadAll(true);
+      },
+    });
+  };
+
+  const requestDeleteClient = (client: UserProfile) => {
+    const label = client.full_name || client.email || 'this client';
+    setConfirmDialog({
+      title: 'Delete client account?',
+      message: `Permanently delete "${label}" along with their login, saved homes, visit requests, enquiries, and reviews? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        await ownerDeleteClient(client.id);
+        setClients((prev) => prev.filter((c) => c.id !== client.id));
+        setSelectedClientIds((prev) => prev.filter((id) => id !== client.id));
+        setViewingClient((prev) => (prev?.id === client.id ? null : prev));
+        showToast('Client account deleted', 'removed');
+        await loadAll(true);
+      },
+    });
+  };
+
+  const requestBulkDeleteClients = () => {
+    if (selectedClientIds.length === 0) return;
+    const count = selectedClientIds.length;
+    setConfirmDialog({
+      title: `Delete ${count} ${count === 1 ? 'client' : 'clients'}?`,
+      message: `Permanently delete ${count} client ${
+        count === 1 ? 'account' : 'accounts'
+      } along with all their saved homes, visit requests, enquiries, and reviews? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      onConfirm: async () => {
+        const idSet = new Set(selectedClientIds);
+        await ownerDeleteClientsBulk(selectedClientIds);
+        setClients((prev) => prev.filter((c) => !idSet.has(c.id)));
+        setViewingClient((prev) => (prev && idSet.has(prev.id) ? null : prev));
+        setSelectedClientIds([]);
+        setClientSelectMode(false);
+        showToast(
+          `${count} ${count === 1 ? 'client' : 'clients'} deleted`,
+          'removed'
+        );
         await loadAll(true);
       },
     });
@@ -1500,6 +1684,8 @@ export const OwnerDashboardPage: React.FC = () => {
     settings: 0,
   };
 
+  const isViewingClientDashboard = tab === 'clients' && viewingClient !== null;
+
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] overflow-x-clip">
       {/* Slim Dedicated Owner Top Bar */}
@@ -1558,17 +1744,19 @@ export const OwnerDashboardPage: React.FC = () => {
           </Link>
 
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                enterOwnerWebsiteView();
-                navigate('/');
-              }}
-              className="min-h-[44px] px-2.5 sm:px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
-            >
-              <Globe className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0 hidden sm:inline-block" />
-              <span>View website</span>
-            </button>
+            {!isViewingClientDashboard && (
+              <button
+                type="button"
+                onClick={() => {
+                  enterOwnerWebsiteView();
+                  navigate('/');
+                }}
+                className="min-h-[44px] px-2.5 sm:px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
+              >
+                <Globe className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0 hidden sm:inline-block" />
+                <span>View website</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -1588,70 +1776,85 @@ export const OwnerDashboardPage: React.FC = () => {
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={async () => {
-                await logout();
-                navigate('/', { replace: true });
-              }}
-              className="min-h-[44px] px-2.5 sm:px-4 rounded-full border border-[var(--border-hairline)] hover:border-rose-500 text-[13px] font-medium text-[var(--text-primary)] hover:text-rose-500 inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
-            >
-              <LogOut className="w-3.5 h-3.5 shrink-0 hidden sm:inline-block" />
-              <span>Sign out</span>
-            </button>
+            {isViewingClientDashboard ? (
+              <button
+                type="button"
+                onClick={() => setViewingClient(null)}
+                className="min-h-[48px] px-3.5 sm:px-4 rounded-full border border-[var(--border-input)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                <span>Back</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={async () => {
+                  await logout();
+                  navigate('/', { replace: true });
+                }}
+                className="min-h-[44px] px-2.5 sm:px-4 rounded-full border border-[var(--border-hairline)] hover:border-rose-500 text-[13px] font-medium text-[var(--text-primary)] hover:text-rose-500 inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
+              >
+                <LogOut className="w-3.5 h-3.5 shrink-0 hidden sm:inline-block" />
+                <span>Sign out</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       {/* Main Workspace Container */}
       <main className="fluid-container pt-[calc(env(safe-area-inset-top,0px)+5.25rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.75rem)] lg:pb-16">
-        {tab !== 'overview' && (
+        {tab !== 'overview' && !isViewingClientDashboard && (
           <div className="mb-4">
             <BackButton label="Back" onClick={handleBackStep} />
           </div>
         )}
 
-        <BackendNotice showConnectionCheck className="mb-5" />
+        {!isViewingClientDashboard && (
+          <BackendNotice showConnectionCheck className="mb-5" />
+        )}
 
-        <div className="lg:flex lg:items-start lg:gap-8">
+        <div className={isViewingClientDashboard ? '' : 'lg:flex lg:items-start lg:gap-8'}>
           {/* Desktop Sticky Left Sidebar Navigation (from 1024px) */}
-          <nav
-            aria-label="Owner dashboard sections"
-            className="hidden lg:flex lg:flex-col lg:w-64 shrink-0 lg:sticky lg:top-24 gap-1.5 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-3 shadow-[var(--shadow-subtle)]"
-          >
-            {OWNER_TABS.map(({ key, label, Icon }) => {
-              const count = attentionCounts[key];
-              const active = tab === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => switchOwnerTab(key)}
-                  className={`w-full min-h-[44px] px-4 py-2.5 rounded-xl text-sm font-medium inline-flex items-center justify-between gap-2 transition-colors cursor-pointer text-left ${
-                    active
-                      ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] font-semibold'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-canvas)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  <span className="inline-flex items-center gap-2.5 min-w-0">
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span className="truncate">{label}</span>
-                  </span>
-                  {count > 0 && (
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[13px] font-semibold tabular-nums leading-none shrink-0 ${
-                        active
-                          ? 'bg-black/15 text-[var(--cta-gold-ink)]'
-                          : 'bg-[var(--bg-surface-muted)] text-[var(--accent-primary)]'
-                      }`}
-                    >
-                      {count}
+          {!isViewingClientDashboard && (
+            <nav
+              aria-label="Owner dashboard sections"
+              className="hidden lg:flex lg:flex-col lg:w-64 shrink-0 lg:sticky lg:top-24 gap-1.5 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-3 shadow-[var(--shadow-subtle)]"
+            >
+              {OWNER_TABS.map(({ key, label, Icon }) => {
+                const count = attentionCounts[key];
+                const active = tab === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => switchOwnerTab(key)}
+                    className={`w-full min-h-[44px] px-4 py-2.5 rounded-xl text-sm font-medium inline-flex items-center justify-between gap-2 transition-colors cursor-pointer text-left ${
+                      active
+                        ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] font-semibold'
+                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-canvas)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2.5 min-w-0">
+                      <Icon className="w-4 h-4 shrink-0" />
+                      <span className="truncate">{label}</span>
                     </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+                    {count > 0 && (
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[13px] font-semibold tabular-nums leading-none shrink-0 ${
+                          active
+                            ? 'bg-black/15 text-[var(--cta-gold-ink)]'
+                            : 'bg-[var(--bg-surface-muted)] text-[var(--accent-primary)]'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          )}
 
           <div className="flex-1 min-w-0">
             {loadError && (
@@ -1727,7 +1930,7 @@ export const OwnerDashboardPage: React.FC = () => {
                           key={item.label}
                           type="button"
                           onClick={item.onClick}
-                          className="lux-card-hover text-left rounded-2xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-subtle)] transition-colors cursor-pointer"
+                          className="lux-card-hover min-h-[48px] text-left rounded-2xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-subtle)] transition-all active:scale-[0.99] cursor-pointer"
                         >
                           <p className="text-[13px] font-medium text-[var(--text-secondary)]">
                             {item.label}
@@ -2932,7 +3135,7 @@ export const OwnerDashboardPage: React.FC = () => {
                               type="button"
                               aria-pressed={propFilter === 'all'}
                               onClick={() => setPropFilter('all')}
-                              className={`min-h-[44px] px-4 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+                              className={`min-h-[48px] px-4 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
                                 propFilter === 'all'
                                   ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
                                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -2944,7 +3147,7 @@ export const OwnerDashboardPage: React.FC = () => {
                               type="button"
                               aria-pressed={propFilter === 'featured'}
                               onClick={() => setPropFilter('featured')}
-                              className={`min-h-[44px] px-4 rounded-lg text-sm font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                              className={`min-h-[48px] px-4 rounded-lg text-sm font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
                                 propFilter === 'featured'
                                   ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
                                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -2960,6 +3163,59 @@ export const OwnerDashboardPage: React.FC = () => {
                               </span>
                             </button>
                           </div>
+
+                          {filteredProperties.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {propSelectMode ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const visibleIds = filteredProperties.map((p) => p.id);
+                                      const allSelected = visibleIds.every((id) =>
+                                        selectedPropIds.includes(id)
+                                      );
+                                      setSelectedPropIds(allSelected ? [] : visibleIds);
+                                    }}
+                                    className="min-h-[48px] px-4 rounded-xl border border-[var(--border-input)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                                  >
+                                    {filteredProperties.every((p) =>
+                                      selectedPropIds.includes(p.id)
+                                    )
+                                      ? 'Unselect all'
+                                      : 'Select all'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={selectedPropIds.length === 0}
+                                    onClick={requestBulkDeleteProperties}
+                                    className="min-h-[48px] px-4 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-45 text-white text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                    <span>Delete selected ({selectedPropIds.length})</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPropSelectMode(false);
+                                      setSelectedPropIds([]);
+                                    }}
+                                    className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] text-sm font-medium text-[var(--text-secondary)] cursor-pointer"
+                                  >
+                                    Done
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setPropSelectMode(true)}
+                                  className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                                >
+                                  Select multiple
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         {filteredProperties.length === 0 ? (
@@ -2974,7 +3230,7 @@ export const OwnerDashboardPage: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setPropFilter('all')}
-                              className="min-h-[44px] px-5 rounded-xl border border-[var(--border-input)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                              className="min-h-[48px] px-5 rounded-xl border border-[var(--border-input)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
                             >
                               Show all properties
                             </button>
@@ -2984,13 +3240,40 @@ export const OwnerDashboardPage: React.FC = () => {
                             {filteredProperties.map((prop) => {
                               const savedCount = favoriteCounts[prop.id] || 0;
                               const linkCopied = copiedPropId === prop.id;
+                              const isChecked = selectedPropIds.includes(prop.id);
                               return (
                                 <div
                                   key={prop.id}
-                                  className="lux-card-hover rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 sm:p-5 shadow-[var(--shadow-subtle)] space-y-4"
+                                  className={`lux-card-hover rounded-2xl border bg-[var(--bg-surface)] p-4 sm:p-5 shadow-[var(--shadow-subtle)] space-y-4 transition-colors ${
+                                    propSelectMode && isChecked
+                                      ? 'border-[var(--accent-primary)]'
+                                      : 'border-[var(--border-hairline)]'
+                                  }`}
                                 >
                                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                                    <div className="flex items-start sm:items-center gap-4 min-w-0">
+                                    <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                                      {propSelectMode && (
+                                        <button
+                                          type="button"
+                                          role="checkbox"
+                                          aria-checked={isChecked}
+                                          aria-label={`Select ${prop.title}`}
+                                          onClick={() =>
+                                            setSelectedPropIds((prev) =>
+                                              prev.includes(prop.id)
+                                                ? prev.filter((id) => id !== prop.id)
+                                                : [...prev, prop.id]
+                                            )
+                                          }
+                                          className={`min-h-[48px] min-w-[48px] rounded-xl border inline-flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                                            isChecked
+                                              ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
+                                              : 'border-[var(--border-input)] bg-[var(--bg-canvas)] text-transparent'
+                                          }`}
+                                        >
+                                          <Check className="w-5 h-5" />
+                                        </button>
+                                      )}
                                       <div className="w-24 sm:w-28 aspect-[4/3] rounded-xl overflow-hidden shrink-0 bg-[var(--bg-surface-muted)]">
                                         <PropertyImage
                                           src={prop.images[0]?.url}
@@ -3061,7 +3344,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                       onClick={() =>
                                         void handleCopyPropertyShareLink(prop)
                                       }
-                                      className="min-h-[44px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer"
+                                      className="min-h-[48px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer"
                                     >
                                       {linkCopied ? (
                                         <Check className="w-4 h-4 text-emerald-500" />
@@ -3079,7 +3362,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                       <button
                                         type="button"
                                         onClick={() => openEditProperty(prop)}
-                                        className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer"
+                                        className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer"
                                       >
                                         <Edit3 className="w-4 h-4 text-[var(--accent-primary)]" />
                                         <span>Edit</span>
@@ -3087,7 +3370,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                       <button
                                         type="button"
                                         onClick={() => requestDeleteProperty(prop)}
-                                        className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-rose-500/50 text-[13px] font-medium text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
+                                        className="min-h-[48px] px-4 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-[13px] font-semibold text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
                                       >
                                         <Trash2 className="w-4 h-4" />
                                         <span>Delete</span>
@@ -3117,14 +3400,72 @@ export const OwnerDashboardPage: React.FC = () => {
                         </p>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={handleDownloadEnquiriesCsv}
-                        className="min-h-[44px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer shrink-0"
-                      >
-                        <Download className="w-4 h-4 text-[var(--accent-primary)]" />
-                        <span>Download as CSV</span>
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {filteredCombinedEnquiries.length > 0 &&
+                          (enqSelectMode ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const visibleKeys = filteredCombinedEnquiries.map((e) =>
+                                    e.kind === 'enquiry'
+                                      ? `inq:${e.id}`
+                                      : `visit:${e.id}`
+                                  );
+                                  const allSelected = visibleKeys.every((k) =>
+                                    selectedEnqKeys.includes(k)
+                                  );
+                                  setSelectedEnqKeys(allSelected ? [] : visibleKeys);
+                                }}
+                                className="min-h-[48px] px-4 rounded-xl border border-[var(--border-input)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                              >
+                                {filteredCombinedEnquiries.every((e) =>
+                                  selectedEnqKeys.includes(
+                                    e.kind === 'enquiry' ? `inq:${e.id}` : `visit:${e.id}`
+                                  )
+                                )
+                                  ? 'Unselect all'
+                                  : 'Select all'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={selectedEnqKeys.length === 0}
+                                onClick={requestBulkDeleteEnquiries}
+                                className="min-h-[48px] px-4 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-45 text-white text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                <span>Delete selected ({selectedEnqKeys.length})</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEnqSelectMode(false);
+                                  setSelectedEnqKeys([]);
+                                }}
+                                className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] text-sm font-medium text-[var(--text-secondary)] cursor-pointer"
+                              >
+                                Done
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setEnqSelectMode(true)}
+                              className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                            >
+                              Select multiple
+                            </button>
+                          ))}
+
+                        <button
+                          type="button"
+                          onClick={handleDownloadEnquiriesCsv}
+                          className="min-h-[48px] px-4 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 cursor-pointer shrink-0"
+                        >
+                          <Download className="w-4 h-4 text-[var(--accent-primary)]" />
+                          <span>Download as CSV</span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Search & Status Filter */}
@@ -3137,7 +3478,7 @@ export const OwnerDashboardPage: React.FC = () => {
                           onChange={(e) => setEnqSearch(e.target.value)}
                           placeholder="Search by name, phone, property, or message..."
                           aria-label="Search enquiries"
-                          className="w-full min-h-[46px] pl-10 pr-4 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)]"
+                          className="w-full min-h-[48px] pl-10 pr-4 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)]"
                         />
                       </div>
 
@@ -3150,7 +3491,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                 key={st}
                                 type="button"
                                 onClick={() => setEnqFilter(st)}
-                                className={`min-h-[44px] px-4 rounded-full text-[13px] font-semibold border cursor-pointer transition-colors ${
+                                className={`min-h-[48px] px-4 rounded-full text-[13px] font-semibold border cursor-pointer transition-colors ${
                                   st === 'all'
                                     ? active
                                       ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
@@ -3181,7 +3522,7 @@ export const OwnerDashboardPage: React.FC = () => {
                           href={shareWebsiteWaHref}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="btn-primary-lux min-h-[46px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
+                          className="btn-primary-lux min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
                         >
                           <Share2 className="w-4 h-4" />
                           <span>Share website on WhatsApp</span>
@@ -3201,15 +3542,26 @@ export const OwnerDashboardPage: React.FC = () => {
                             setEnqFilter('all');
                             setEnqSearch('');
                           }}
-                          className="min-h-[44px] px-5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] cursor-pointer"
+                          className="min-h-[48px] px-5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] cursor-pointer"
                         >
                           Show all enquiries
                         </button>
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {filteredCombinedEnquiries.map((entry) =>
-                          entry.kind === 'enquiry' ? (
+                        {filteredCombinedEnquiries.map((entry) => {
+                          const key =
+                            entry.kind === 'enquiry'
+                              ? `inq:${entry.id}`
+                              : `visit:${entry.id}`;
+                          const isChecked = selectedEnqKeys.includes(key);
+                          const toggleSelect = () =>
+                            setSelectedEnqKeys((prev) =>
+                              prev.includes(key)
+                                ? prev.filter((k) => k !== key)
+                                : [...prev, key]
+                            );
+                          return entry.kind === 'enquiry' ? (
                             <OwnerUnifiedEnquiryCard
                               key={`inq-${entry.id}`}
                               type="enquiry"
@@ -3223,6 +3575,10 @@ export const OwnerDashboardPage: React.FC = () => {
                               isUnread={!entry.isRead}
                               createdAt={entry.createdAt}
                               businessName={businessName}
+                              selectMode={enqSelectMode}
+                              selected={isChecked}
+                              onToggleSelect={toggleSelect}
+                              onDelete={() => requestDeleteEnquiryEntry(entry)}
                               onOpen={() => {
                                 if (!entry.isRead) {
                                   void handleMarkEnquiryRead(entry.id);
@@ -3252,6 +3608,10 @@ export const OwnerDashboardPage: React.FC = () => {
                               isUnread={false}
                               createdAt={entry.createdAt}
                               businessName={businessName}
+                              selectMode={enqSelectMode}
+                              selected={isChecked}
+                              onToggleSelect={toggleSelect}
+                              onDelete={() => requestDeleteEnquiryEntry(entry)}
                               onOpenPropertyLink={enterOwnerWebsiteView}
                               onSave={async (nextStatus, nextNote) => {
                                 await handleBookingUpdate(
@@ -3261,8 +3621,8 @@ export const OwnerDashboardPage: React.FC = () => {
                                 );
                               }}
                             />
-                          )
-                        )}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -3281,29 +3641,81 @@ export const OwnerDashboardPage: React.FC = () => {
                         </p>
                       </div>
 
-                      <div className="flex flex-wrap gap-1.5">
-                        {(
-                          [
-                            { key: 'all', label: 'All' },
-                            { key: 'pending', label: 'Waiting' },
-                            { key: 'approved', label: 'Approved' },
-                            { key: 'rejected', label: 'Rejected' },
-                          ] as const
-                        ).map((item) => (
-                          <button
-                            key={item.key}
-                            type="button"
-                            onClick={() => setRevFilter(item.key)}
-                            className={`min-h-[44px] px-4 rounded-full text-[13px] font-semibold border cursor-pointer transition-colors ${
-                              revFilter === item.key
-                                ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
-                                : 'bg-[var(--bg-surface)] border-[var(--border-hairline)] text-[var(--text-secondary)]'
-                            }`}
-                          >
-                            {item.label}
-                          </button>
-                        ))}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {filteredReviews.length > 0 &&
+                          (revSelectMode ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const visibleIds = filteredReviews.map((r) => r.id);
+                                  const allSelected = visibleIds.every((id) =>
+                                    selectedRevIds.includes(id)
+                                  );
+                                  setSelectedRevIds(allSelected ? [] : visibleIds);
+                                }}
+                                className="min-h-[48px] px-4 rounded-xl border border-[var(--border-input)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                              >
+                                {filteredReviews.every((r) =>
+                                  selectedRevIds.includes(r.id)
+                                )
+                                  ? 'Unselect all'
+                                  : 'Select all'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={selectedRevIds.length === 0}
+                                onClick={requestBulkDeleteReviews}
+                                className="min-h-[48px] px-4 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-45 text-white text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                <span>Delete selected ({selectedRevIds.length})</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRevSelectMode(false);
+                                  setSelectedRevIds([]);
+                                }}
+                                className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] text-sm font-medium text-[var(--text-secondary)] cursor-pointer"
+                              >
+                                Done
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setRevSelectMode(true)}
+                              className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                            >
+                              Select multiple
+                            </button>
+                          ))}
                       </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {(
+                        [
+                          { key: 'all', label: 'All' },
+                          { key: 'pending', label: 'Waiting' },
+                          { key: 'approved', label: 'Approved' },
+                          { key: 'rejected', label: 'Rejected' },
+                        ] as const
+                      ).map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => setRevFilter(item.key)}
+                          className={`min-h-[48px] px-4 rounded-full text-[13px] font-semibold border cursor-pointer transition-colors ${
+                            revFilter === item.key
+                              ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
+                              : 'bg-[var(--bg-surface)] border-[var(--border-hairline)] text-[var(--text-secondary)]'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
                     </div>
 
                     {reviews.length === 0 ? (
@@ -3318,7 +3730,7 @@ export const OwnerDashboardPage: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => void handleCopyReviewRequest()}
-                          className="btn-primary-lux min-h-[46px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer"
+                          className="btn-primary-lux min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2 cursor-pointer"
                         >
                           <Star className="w-4 h-4" />
                           <span>Ask for a review</span>
@@ -3335,7 +3747,7 @@ export const OwnerDashboardPage: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setRevFilter('all')}
-                          className="min-h-[44px] px-5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] cursor-pointer"
+                          className="min-h-[48px] px-5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] cursor-pointer"
                         >
                           Show all reviews
                         </button>
@@ -3352,39 +3764,68 @@ export const OwnerDashboardPage: React.FC = () => {
                               : rev.status === 'approved'
                               ? 'Approved'
                               : 'Rejected';
+                          const isChecked = selectedRevIds.includes(rev.id);
                           return (
                             <div
                               key={rev.id}
-                              className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-subtle)] space-y-4"
+                              className={`rounded-2xl border bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-subtle)] space-y-4 transition-colors ${
+                                revSelectMode && isChecked
+                                  ? 'border-[var(--accent-primary)]'
+                                  : 'border-[var(--border-hairline)]'
+                              }`}
                             >
                               <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div className="space-y-1 min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h2 className="text-base font-semibold text-[var(--text-primary)] break-anywhere">
-                                      {rev.reviewer_name}
-                                    </h2>
-                                    <span
-                                      className={`px-2.5 py-0.5 rounded-full border text-[13px] font-semibold ${reviewStatusChipStyle(
-                                        rev.status
-                                      )}`}
+                                <div className="flex items-start gap-3 min-w-0 flex-1">
+                                  {revSelectMode && (
+                                    <button
+                                      type="button"
+                                      role="checkbox"
+                                      aria-checked={isChecked}
+                                      aria-label={`Select review by ${rev.reviewer_name}`}
+                                      onClick={() =>
+                                        setSelectedRevIds((prev) =>
+                                          prev.includes(rev.id)
+                                            ? prev.filter((id) => id !== rev.id)
+                                            : [...prev, rev.id]
+                                        )
+                                      }
+                                      className={`min-h-[48px] min-w-[48px] rounded-xl border inline-flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                                        isChecked
+                                          ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
+                                          : 'border-[var(--border-input)] bg-[var(--bg-canvas)] text-transparent'
+                                      }`}
                                     >
-                                      {statusLabel}
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--text-muted)]">
-                                    <span className="inline-flex items-center gap-0.5 text-[var(--accent-secondary)] tabular-nums font-medium">
-                                      {rev.rating} / 5 stars
-                                    </span>
-                                    <span aria-hidden="true">&middot;</span>
-                                    <span>{rev.customer_type}</span>
-                                    {reviewDateText && (
-                                      <>
-                                        <span aria-hidden="true">&middot;</span>
-                                        <span className="tabular-nums">
-                                          {reviewDateText}
-                                        </span>
-                                      </>
-                                    )}
+                                      <Check className="w-5 h-5" />
+                                    </button>
+                                  )}
+                                  <div className="space-y-1 min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h2 className="text-base font-semibold text-[var(--text-primary)] break-anywhere">
+                                        {rev.reviewer_name}
+                                      </h2>
+                                      <span
+                                        className={`px-2.5 py-0.5 rounded-full border text-[13px] font-semibold ${reviewStatusChipStyle(
+                                          rev.status
+                                        )}`}
+                                      >
+                                        {statusLabel}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--text-muted)]">
+                                      <span className="inline-flex items-center gap-0.5 text-[var(--accent-secondary)] tabular-nums font-medium">
+                                        {rev.rating} / 5 stars
+                                      </span>
+                                      <span aria-hidden="true">&middot;</span>
+                                      <span>{rev.customer_type}</span>
+                                      {reviewDateText && (
+                                        <>
+                                          <span aria-hidden="true">&middot;</span>
+                                          <span className="tabular-nums">
+                                            {reviewDateText}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
 
@@ -3392,9 +3833,10 @@ export const OwnerDashboardPage: React.FC = () => {
                                   type="button"
                                   onClick={() => requestDeleteReview(rev)}
                                   aria-label={`Delete review by ${rev.reviewer_name}`}
-                                  className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-rose-500 cursor-pointer shrink-0"
+                                  className="min-h-[48px] px-3.5 inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-sm font-semibold text-rose-500 cursor-pointer shrink-0"
                                 >
                                   <Trash2 className="w-4 h-4" />
+                                  <span>Delete</span>
                                 </button>
                               </div>
 
@@ -3412,7 +3854,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                         status: 'approved',
                                       })
                                     }
-                                    className={`min-h-[44px] px-5 rounded-full text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-55 ${
+                                    className={`min-h-[48px] px-5 rounded-full text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-55 ${
                                       rev.status === 'approved'
                                         ? 'bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/40'
                                         : 'bg-emerald-600 hover:bg-emerald-700 text-white'
@@ -3434,7 +3876,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                         status: 'rejected',
                                       })
                                     }
-                                    className={`min-h-[44px] px-5 rounded-full border text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-55 ${
+                                    className={`min-h-[48px] px-5 rounded-full border text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-55 ${
                                       rev.status === 'rejected'
                                         ? 'border-rose-500/40 bg-rose-500/12 text-rose-500'
                                         : 'border-[var(--border-hairline)] hover:border-rose-500 text-rose-500'
@@ -3457,7 +3899,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                       is_featured: !rev.is_featured,
                                     })
                                   }
-                                  className={`min-h-[44px] px-4 rounded-full border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
+                                  className={`min-h-[48px] px-4 rounded-full border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
                                     rev.is_featured
                                       ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] font-semibold'
                                       : 'bg-[var(--btn-secondary-bg)] border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:border-[var(--border-strong)]'
@@ -4751,160 +5193,246 @@ export const OwnerDashboardPage: React.FC = () => {
 
                 {/* 5. CLIENTS TAB */}
                 {tab === 'clients' && (
-                  <div className="space-y-5">
-                    <div>
-                      <h1 className="font-display text-[clamp(1.75rem,4vw,2.35rem)] font-semibold text-[var(--text-primary)]">
-                        Clients ({clients.length})
-                      </h1>
-                      <p className="text-sm text-[var(--text-secondary)] mt-0.5">
-                        Registered client accounts, their saved properties, enquiries, visit requests, and reviews.
-                      </p>
-                    </div>
+                  viewingClient ? (
+                    <CustomerDashboardPage
+                      key={viewingClient.id}
+                      viewedProfile={viewingClient}
+                      isOwnerViewing
+                      onBackToClients={() => setViewingClient(null)}
+                    />
+                  ) : (
+                    <div className="space-y-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h1 className="font-display text-[clamp(1.75rem,4vw,2.35rem)] font-semibold text-[var(--text-primary)]">
+                            Clients ({filteredClients.length})
+                          </h1>
+                          <p className="text-sm text-[var(--text-secondary)] mt-0.5">
+                            Open any client&apos;s dashboard to review their saved homes, visits, enquiries, reviews, or set a new password.
+                          </p>
+                        </div>
 
-                    {clients.length === 0 ? (
-                      <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 sm:p-10 shadow-[var(--shadow-subtle)] text-center space-y-4">
-                        <Users className="w-10 h-10 mx-auto text-[var(--accent-primary)] opacity-85" />
-                        <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-                          No client accounts yet
-                        </h2>
-                        <p className="text-sm text-[var(--text-secondary)] max-w-md mx-auto">
-                          When buyers or tenants create an account on your website, they will appear here with their saved homes and requests.
-                        </p>
-                        <a
-                          href={shareWebsiteWaHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="btn-primary-lux min-h-[46px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
-                        >
-                          <Share2 className="w-4 h-4" />
-                          <span>Share website on WhatsApp</span>
-                        </a>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {clients.map((c) => {
-                          const joinedText = formatReviewDate(c.created_at);
-                          const activity = clientActivityById[c.id] || {
-                            savedProperties: [],
-                            bookings: [],
-                            inquiries: [],
-                            reviews: [],
-                          };
-                          const isSelected = expandedClientId === c.id;
-                          return (
-                            <div
-                              key={c.id}
-                              onClick={() =>
-                                setExpandedClientId((prev) =>
-                                  prev === c.id ? null : c.id
-                                )
-                              }
-                              className={`rounded-2xl border p-4 sm:p-5 shadow-[var(--shadow-subtle)] transition-colors cursor-pointer space-y-3 ${
-                                isSelected
-                                  ? 'border-[var(--accent-primary)]/50 bg-[var(--bg-surface)]'
-                                  : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:border-[var(--border-strong)]'
-                              }`}
-                            >
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                <div className="min-w-0 space-y-1">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h2 className="text-base sm:text-lg font-semibold text-[var(--text-primary)] break-anywhere">
-                                      {c.full_name || 'Client'}
-                                    </h2>
-                                    {joinedText && (
-                                      <span className="text-[13px] text-[var(--text-muted)] tabular-nums">
-                                        Joined {joinedText}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--text-secondary)]">
-                                    {c.email && (
-                                      <span className="inline-flex items-center gap-1 break-anywhere">
-                                        <Mail className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
-                                        <span>{c.email}</span>
-                                      </span>
-                                    )}
-                                    <span className="inline-flex items-center gap-1 tabular-nums">
-                                      <Phone className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
-                                      <span>{c.phone || 'Phone not added'}</span>
-                                    </span>
-                                    {c.city && (
-                                      <span className="inline-flex items-center gap-1">
-                                        <MapPin className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
-                                        <span>{c.city}</span>
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold tabular-nums shrink-0">
-                                  <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
-                                    {activity.savedProperties.length} saved
-                                  </span>
-                                  <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
-                                    {activity.inquiries.length} enquiries
-                                  </span>
-                                  <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
-                                    {activity.reviews.length} reviews
-                                  </span>
-                                </div>
-                              </div>
-
-                              {isSelected && (
-                                <div
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="pt-3 border-t border-[var(--border-hairline)] flex flex-wrap items-center gap-2.5"
+                        {filteredClients.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {clientSelectMode ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const visibleIds = filteredClients.map((c) => c.id);
+                                    const allSelected = visibleIds.every((id) =>
+                                      selectedClientIds.includes(id)
+                                    );
+                                    setSelectedClientIds(allSelected ? [] : visibleIds);
+                                  }}
+                                  className="min-h-[48px] px-4 rounded-xl border border-[var(--border-input)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
                                 >
+                                  {filteredClients.every((c) =>
+                                    selectedClientIds.includes(c.id)
+                                  )
+                                    ? 'Unselect all'
+                                    : 'Select all'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={selectedClientIds.length === 0}
+                                  onClick={requestBulkDeleteClients}
+                                  className="min-h-[48px] px-4 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-45 text-white text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                  <span>Delete selected ({selectedClientIds.length})</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setClientSelectMode(false);
+                                    setSelectedClientIds([]);
+                                  }}
+                                  className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] text-sm font-medium text-[var(--text-secondary)] cursor-pointer"
+                                >
+                                  Done
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setClientSelectMode(true)}
+                                className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] bg-[var(--bg-surface)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                              >
+                                Select multiple
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {clients.length > 0 && (
+                        <div className="relative">
+                          <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            type="search"
+                            value={clientSearch}
+                            onChange={(e) => setClientSearch(e.target.value)}
+                            placeholder="Search clients by name, phone, or email..."
+                            aria-label="Search clients"
+                            className="w-full min-h-[48px] pl-10 pr-4 py-2.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)]"
+                          />
+                        </div>
+                      )}
+
+                      {clients.length === 0 ? (
+                        <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 sm:p-10 shadow-[var(--shadow-subtle)] text-center space-y-4">
+                          <Users className="w-10 h-10 mx-auto text-[var(--accent-primary)] opacity-85" />
+                          <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
+                            No client accounts yet
+                          </h2>
+                          <p className="text-sm text-[var(--text-secondary)] max-w-md mx-auto">
+                            When buyers or tenants create an account on your website, they will appear here with their saved homes and requests.
+                          </p>
+                          <a
+                            href={shareWebsiteWaHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn-primary-lux min-h-[48px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
+                          >
+                            <Share2 className="w-4 h-4" />
+                            <span>Share website on WhatsApp</span>
+                          </a>
+                        </div>
+                      ) : filteredClients.length === 0 ? (
+                        <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 shadow-[var(--shadow-subtle)] text-center space-y-4">
+                          <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
+                            No matching clients
+                          </h2>
+                          <p className="text-sm text-[var(--text-secondary)]">
+                            Try searching another name, phone number, or email address.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setClientSearch('')}
+                            className="min-h-[48px] px-5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] cursor-pointer"
+                          >
+                            Show all clients
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {filteredClients.map((c) => {
+                            const joinedText = formatReviewDate(c.created_at);
+                            const activity = clientActivityById[c.id] || {
+                              savedProperties: [],
+                              bookings: [],
+                              inquiries: [],
+                              reviews: [],
+                            };
+                            const isChecked = selectedClientIds.includes(c.id);
+                            return (
+                              <div
+                                key={c.id}
+                                className={`rounded-2xl border bg-[var(--bg-surface)] p-4 sm:p-5 shadow-[var(--shadow-subtle)] transition-colors space-y-3.5 ${
+                                  clientSelectMode && isChecked
+                                    ? 'border-[var(--accent-primary)]'
+                                    : 'border-[var(--border-hairline)] hover:border-[var(--border-strong)]'
+                                }`}
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                  <div className="flex items-start gap-3 min-w-0">
+                                    {clientSelectMode && (
+                                      <button
+                                        type="button"
+                                        role="checkbox"
+                                        aria-checked={isChecked}
+                                        aria-label={`Select ${c.full_name || c.email || 'client'}`}
+                                        onClick={() =>
+                                          setSelectedClientIds((prev) =>
+                                            prev.includes(c.id)
+                                              ? prev.filter((id) => id !== c.id)
+                                              : [...prev, c.id]
+                                          )
+                                        }
+                                        className={`min-h-[48px] min-w-[48px] rounded-xl border inline-flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                                          isChecked
+                                            ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
+                                            : 'border-[var(--border-input)] bg-[var(--bg-canvas)] text-transparent'
+                                        }`}
+                                      >
+                                        <Check className="w-5 h-5" />
+                                      </button>
+                                    )}
+                                    <div className="min-w-0 space-y-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <h2 className="text-base sm:text-lg font-semibold text-[var(--text-primary)] break-anywhere">
+                                          {c.full_name || 'Client'}
+                                        </h2>
+                                        {joinedText && (
+                                          <span className="text-[13px] text-[var(--text-muted)] tabular-nums">
+                                            Joined {joinedText}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--text-secondary)]">
+                                        {c.email && (
+                                          <span className="inline-flex items-center gap-1 break-anywhere">
+                                            <Mail className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                                            <span>{c.email}</span>
+                                          </span>
+                                        )}
+                                        <span className="inline-flex items-center gap-1 tabular-nums">
+                                          <Phone className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                                          <span>{c.phone || 'Phone not added'}</span>
+                                        </span>
+                                        {c.city && (
+                                          <span className="inline-flex items-center gap-1">
+                                            <MapPin className="w-3.5 h-3.5 text-[var(--accent-primary)] shrink-0" />
+                                            <span>{c.city}</span>
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold tabular-nums shrink-0">
+                                    <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                                      {activity.savedProperties.length} saved
+                                    </span>
+                                    <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                                      {activity.bookings.length} visits
+                                    </span>
+                                    <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                                      {activity.inquiries.length} enquiries
+                                    </span>
+                                    <span className="px-2.5 py-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                                      {activity.reviews.length} reviews
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="pt-3 border-t border-[var(--border-hairline)] flex flex-wrap items-center justify-between gap-2.5">
                                   <button
                                     type="button"
-                                    onClick={() => setDetailClient(c)}
-                                    className="btn-primary-lux min-h-[44px] px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                                    onClick={() => setViewingClient(c)}
+                                    className="btn-primary-lux min-h-[48px] px-5 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                                   >
                                     <span>Details</span>
                                     <ArrowRight className="w-4 h-4" />
                                   </button>
 
-                                  {c.email && (
-                                    <button
-                                      type="button"
-                                      disabled={resettingClientId === c.id}
-                                      onClick={() =>
-                                        void handleSendClientResetEmail(c)
-                                      }
-                                      className="min-h-[44px] px-4 rounded-xl border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
-                                    >
-                                      {resettingClientId === c.id ? (
-                                        <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
-                                      ) : resetSentClientIds[c.id] ? (
-                                        <Check className="w-4 h-4 text-emerald-500" />
-                                      ) : (
-                                        <Mail className="w-4 h-4 text-[var(--accent-primary)]" />
-                                      )}
-                                      <span>
-                                        {resetSentClientIds[c.id]
-                                          ? 'Password reset email sent'
-                                          : 'Send password reset email'}
-                                      </span>
-                                    </button>
-                                  )}
-
-                                  {c.phone && (
-                                    <a
-                                      href={`tel:${c.phone.replace(/\s+/g, '')}`}
-                                      className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 tabular-nums"
-                                    >
-                                      <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
-                                      <span>Call</span>
-                                    </a>
-                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => requestDeleteClient(c)}
+                                    className="min-h-[48px] px-4 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-sm font-semibold text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                    <span>Delete</span>
+                                  </button>
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
                 )}
               </>
             )}
@@ -4912,42 +5440,44 @@ export const OwnerDashboardPage: React.FC = () => {
         </div>
       </main>
 
-      {/* Mobile Fixed Bottom 6-Tab Bar (100% visible, zero sideways scroll) */}
-      <nav
-        aria-label="Owner mobile tabs"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-6 border-t border-[var(--border-hairline)] bg-[var(--bg-surface)]/96 backdrop-blur-2xl pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]"
-      >
-        {OWNER_TABS.map(({ key, label, Icon }) => {
-          const active = tab === key;
-          const count = attentionCounts[key];
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => switchOwnerTab(key)}
-              className={`relative min-h-[60px] min-w-0 px-0.5 py-2 flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
-                active
-                  ? 'text-[var(--accent-primary)] font-semibold'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <div className="relative">
-                <Icon className="w-5 h-5 shrink-0" />
-                {count > 0 && (
-                  <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 rounded-full bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] text-[11px] font-bold tabular-nums flex items-center justify-center leading-none">
-                    {count}
-                  </span>
-                )}
-              </div>
-              <span className="text-[clamp(0.5625rem,2.4vw,0.75rem)] tracking-[-0.025em] leading-none whitespace-nowrap">
-                {label}
-              </span>
-            </button>
-          );
-        })}
-      </nav>
+      {/* Mobile Fixed Bottom 6-Tab Bar (hidden when inspecting a client's own dashboard) */}
+      {!isViewingClientDashboard && (
+        <nav
+          aria-label="Owner mobile tabs"
+          className="lg:hidden fixed bottom-0 inset-x-0 z-40 grid grid-cols-6 border-t border-[var(--border-hairline)] bg-[var(--bg-surface)]/96 backdrop-blur-2xl pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]"
+        >
+          {OWNER_TABS.map(({ key, label, Icon }) => {
+            const active = tab === key;
+            const count = attentionCounts[key];
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => switchOwnerTab(key)}
+                className={`relative min-h-[60px] min-w-0 px-0.5 py-2 flex flex-col items-center justify-center gap-1 transition-colors cursor-pointer ${
+                  active
+                    ? 'text-[var(--accent-primary)] font-semibold'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <div className="relative">
+                  <Icon className="w-5 h-5 shrink-0" />
+                  {count > 0 && (
+                    <span className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 rounded-full bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] text-[11px] font-bold tabular-nums flex items-center justify-center leading-none">
+                      {count}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[clamp(0.5625rem,2.4vw,0.75rem)] tracking-[-0.025em] leading-none whitespace-nowrap">
+                  {label}
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
 
-      {/* Confirmation Modal */}
+      {/* Confirmation Sheet */}
       <AnimatePresence>
         {confirmDialog && (
           <motion.div
@@ -4958,26 +5488,26 @@ export const OwnerDashboardPage: React.FC = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2, ease: LUX_EASE }}
+            transition={{ duration: 0.22, ease: LUX_EASE }}
             onClick={() => {
               if (!confirmBusy) setConfirmDialog(null);
             }}
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center pt-[max(1rem,env(safe-area-inset-top,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))] pl-[max(1rem,env(safe-area-inset-left,0px))]"
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center pt-[max(1rem,env(safe-area-inset-top,0px))] sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom,0px))]"
           >
             <motion.div
               key="confirm-dialog-card"
               initial={
-                prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 8 }
+                prefersReduced ? { opacity: 0 } : { opacity: 0, y: 28 }
               }
               animate={
-                prefersReduced ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }
+                prefersReduced ? { opacity: 1 } : { opacity: 1, y: 0 }
               }
               exit={
-                prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 6 }
+                prefersReduced ? { opacity: 0 } : { opacity: 0, y: 24 }
               }
-              transition={{ duration: 0.22, ease: LUX_EASE }}
+              transition={{ duration: 0.24, ease: LUX_EASE }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-sm max-h-[90dvh] overflow-y-auto rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-6 space-y-4"
+              className="w-full sm:max-w-sm max-h-[90dvh] overflow-y-auto rounded-t-3xl sm:rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 space-y-5"
             >
               <div className="flex items-start gap-3">
                 <div className="h-10 w-10 rounded-full bg-rose-500/15 text-rose-500 flex items-center justify-center shrink-0">
@@ -4992,12 +5522,12 @@ export const OwnerDashboardPage: React.FC = () => {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center justify-end gap-2.5 pt-2">
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2.5 pt-1">
                 <button
                   type="button"
                   disabled={confirmBusy}
                   onClick={() => setConfirmDialog(null)}
-                  className="min-h-[44px] px-4 rounded-full border border-[var(--border-hairline)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
+                  className="min-h-[48px] px-5 rounded-full border border-[var(--border-hairline)] text-sm font-medium text-[var(--text-primary)] cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -5010,291 +5540,25 @@ export const OwnerDashboardPage: React.FC = () => {
                       await confirmDialog.onConfirm();
                       setConfirmDialog(null);
                     } catch (err) {
+                      setConfirmDialog(null);
                       showToast(
-                        err instanceof Error
+                        err instanceof Error && err.message
                           ? err.message
-                          : 'Unable to complete action.',
+                          : 'Could not delete. Please try again.',
                         'error'
                       );
                     } finally {
                       setConfirmBusy(false);
                     }
                   }}
-                  className="min-h-[44px] px-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  className="min-h-[48px] px-6 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
                 >
                   {confirmBusy && <Loader2 className="w-4 h-4 animate-spin" />}
-                  <span>{confirmDialog.confirmLabel}</span>
+                  <span>
+                    {confirmBusy ? 'Deleting...' : confirmDialog.confirmLabel}
+                  </span>
                 </button>
               </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {/* Client Activity Details Modal */}
-      <AnimatePresence>
-        {detailClient && (
-          <motion.div
-            key="client-detail-backdrop"
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Activity for ${detailClient.full_name || 'Client'}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2, ease: LUX_EASE }}
-            onClick={() => setDetailClient(null)}
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center pt-[max(1rem,env(safe-area-inset-top,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))] pl-[max(1rem,env(safe-area-inset-left,0px))]"
-          >
-            <motion.div
-              key="client-detail-card"
-              initial={
-                prefersReduced
-                  ? { opacity: 0 }
-                  : { opacity: 0, scale: 0.97, y: 12 }
-              }
-              animate={
-                prefersReduced ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }
-              }
-              exit={
-                prefersReduced
-                  ? { opacity: 0 }
-                  : { opacity: 0, scale: 0.97, y: 8 }
-              }
-              transition={{ duration: 0.22, ease: LUX_EASE }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-2xl max-h-[90dvh] overflow-y-auto rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] shadow-[var(--shadow-elevated)] p-5 sm:p-6 space-y-5"
-            >
-              {(() => {
-                const activity = clientActivityById[detailClient.id] || {
-                  savedProperties: [],
-                  bookings: [],
-                  inquiries: [],
-                  reviews: [],
-                };
-                const joinedText = formatReviewDate(detailClient.created_at);
-                return (
-                  <>
-                    <div className="flex items-start justify-between gap-3 pb-4 border-b border-[var(--border-hairline)]">
-                      <div className="min-w-0 space-y-1">
-                        <h3 className="font-display text-2xl font-semibold text-[var(--text-primary)] break-anywhere">
-                          {detailClient.full_name || 'Client'}
-                        </h3>
-                        <p className="text-sm text-[var(--text-secondary)] break-anywhere">
-                          {detailClient.email || 'No email'}
-                          {detailClient.phone ? ` · ${detailClient.phone}` : ''}
-                          {detailClient.city ? ` · ${detailClient.city}` : ''}
-                        </p>
-                        {joinedText && (
-                          <p className="text-[13px] text-[var(--text-muted)] tabular-nums">
-                            Joined {joinedText}
-                          </p>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setDetailClient(null)}
-                        aria-label="Close client details"
-                        className="h-11 w-11 rounded-xl border border-[var(--border-hairline)] inline-flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer shrink-0"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      {detailClient.email && (
-                        <button
-                          type="button"
-                          disabled={resettingClientId === detailClient.id}
-                          onClick={() =>
-                            void handleSendClientResetEmail(detailClient)
-                          }
-                          className="min-h-[44px] px-4 rounded-xl border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
-                        >
-                          {resettingClientId === detailClient.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-primary)]" />
-                          ) : resetSentClientIds[detailClient.id] ? (
-                            <Check className="w-4 h-4 text-emerald-500" />
-                          ) : (
-                            <Mail className="w-4 h-4 text-[var(--accent-primary)]" />
-                          )}
-                          <span>
-                            {resetSentClientIds[detailClient.id]
-                              ? 'Password reset email sent'
-                              : 'Send password reset email'}
-                          </span>
-                        </button>
-                      )}
-                      {detailClient.phone && (
-                        <a
-                          href={`tel:${detailClient.phone.replace(/\s+/g, '')}`}
-                          className="min-h-[44px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-sm font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 tabular-nums"
-                        >
-                          <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
-                          <span>Call</span>
-                        </a>
-                      )}
-                    </div>
-
-                    {/* Saved properties */}
-                    <div className="space-y-2">
-                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">
-                        Saved properties ({activity.savedProperties.length})
-                      </h4>
-                      {activity.savedProperties.length === 0 ? (
-                        <p className="text-sm text-[var(--text-muted)]">
-                          No saved properties yet.
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {activity.savedProperties.map((prop) => (
-                            <div
-                              key={prop.id}
-                              className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5 flex items-center justify-between gap-3"
-                            >
-                              <div className="min-w-0">
-                                <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
-                                  {prop.title}
-                                </p>
-                                <p className="text-[13px] text-[var(--text-secondary)] truncate">
-                                  {prop.location} ·{' '}
-                                  {formatINRReadable(
-                                    prop.price_inr,
-                                    prop.listing_type,
-                                    prop.price_unit
-                                  )}
-                                </p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Site visit requests */}
-                    <div className="space-y-2">
-                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">
-                        Site visit requests ({activity.bookings.length})
-                      </h4>
-                      {activity.bookings.length === 0 ? (
-                        <p className="text-sm text-[var(--text-muted)]">
-                          No site visit requests yet.
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {activity.bookings.map((b) => (
-                            <div
-                              key={b.id}
-                              className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5 space-y-1"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-sm font-semibold text-[var(--text-primary)]">
-                                  {b.property_title}
-                                </p>
-                                <span
-                                  className={`px-2 py-0.5 rounded-full border text-[13px] font-semibold ${unifiedChipStyle(
-                                    bookingToUnified(b.status),
-                                    true
-                                  )}`}
-                                >
-                                  {unifiedLabel(bookingToUnified(b.status))}
-                                </span>
-                              </div>
-                              <p className="text-[13px] text-[var(--text-secondary)] tabular-nums">
-                                {b.preferred_date} at {b.preferred_time}
-                              </p>
-                              {b.note && (
-                                <p className="text-[13px] text-[var(--text-muted)] break-anywhere">
-                                  {b.note}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Enquiries */}
-                    <div className="space-y-2">
-                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">
-                        Enquiries ({activity.inquiries.length})
-                      </h4>
-                      {activity.inquiries.length === 0 ? (
-                        <p className="text-sm text-[var(--text-muted)]">
-                          No enquiries yet.
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {activity.inquiries.map((inq) => (
-                            <div
-                              key={inq.id}
-                              className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5 space-y-1"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-sm font-semibold text-[var(--text-primary)]">
-                                  {inq.property_title || inq.interested_in}
-                                </p>
-                                <span
-                                  className={`px-2 py-0.5 rounded-full border text-[13px] font-semibold ${unifiedChipStyle(
-                                    inquiryToUnified(inq.status),
-                                    true
-                                  )}`}
-                                >
-                                  {unifiedLabel(inquiryToUnified(inq.status))}
-                                </span>
-                              </div>
-                              {inq.message && (
-                                <p className="text-[13px] text-[var(--text-secondary)] break-anywhere">
-                                  {inq.message}
-                                </p>
-                              )}
-                              <p className="text-[13px] text-[var(--text-muted)] tabular-nums">
-                                {formatReviewDate(inq.created_at)}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Reviews */}
-                    <div className="space-y-2">
-                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">
-                        Reviews ({activity.reviews.length})
-                      </h4>
-                      {activity.reviews.length === 0 ? (
-                        <p className="text-sm text-[var(--text-muted)]">
-                          No reviews submitted yet.
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {activity.reviews.map((rev) => (
-                            <div
-                              key={rev.id}
-                              className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 py-2.5 space-y-1"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-sm font-semibold text-[var(--text-primary)] tabular-nums">
-                                  {rev.rating} / 5 stars · {rev.customer_type}
-                                </p>
-                                <span
-                                  className={`px-2 py-0.5 rounded-full border text-[13px] font-semibold ${reviewStatusChipStyle(
-                                    rev.status
-                                  )}`}
-                                >
-                                  {rev.status}
-                                </span>
-                              </div>
-                              <p className="text-[13px] text-[var(--text-secondary)] break-anywhere">
-                                &ldquo;{rev.review_text}&rdquo;
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                );
-              })()}
             </motion.div>
           </motion.div>
         )}
@@ -5317,6 +5581,10 @@ const OwnerUnifiedEnquiryCard: React.FC<{
   isUnread?: boolean;
   createdAt: string;
   businessName: string;
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  onDelete: () => void;
   onOpen?: () => void;
   onOpenPropertyLink?: () => void;
   onSave: (status: UnifiedEnquiryStatus, note: string) => Promise<void>;
@@ -5334,6 +5602,10 @@ const OwnerUnifiedEnquiryCard: React.FC<{
   isUnread = false,
   createdAt,
   businessName,
+  selectMode = false,
+  selected = false,
+  onToggleSelect,
+  onDelete,
   onOpen,
   onOpenPropertyLink,
   onSave,
@@ -5355,7 +5627,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
   const relativeTime = formatRelativeTimeAgo(createdAt);
   const exactDate = formatReviewDate(createdAt);
 
-  const waHref = formatWaHref(
+  const waHref = buildWhatsappChatHref(
     phone,
     type === 'visit'
       ? `Namaste ${name}, thank you for requesting a site visit for ${subject}${
@@ -5376,74 +5648,94 @@ const OwnerUnifiedEnquiryCard: React.FC<{
   return (
     <div
       className={`lux-card-hover rounded-2xl border p-5 shadow-[var(--shadow-subtle)] space-y-4 transition-colors ${
-        isUnread
+        selectMode && selected
+          ? 'border-[var(--accent-primary)] bg-[var(--bg-surface)]'
+          : isUnread
           ? 'border-[var(--accent-primary)]/45 bg-[var(--bg-surface)]'
           : 'border-[var(--border-hairline)] bg-[var(--bg-surface)]'
       }`}
     >
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-        <button
-          type="button"
-          onClick={handleOpenCard}
-          aria-expanded={isOpen}
-          className="space-y-1 min-w-0 flex-1 text-left cursor-pointer"
-        >
-          <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--text-muted)]">
-            {isUnread && (
-              <span
-                aria-label="Unread enquiry"
-                className="w-2.5 h-2.5 rounded-full bg-[var(--accent-primary)] shrink-0"
-              />
-            )}
-            <span className="inline-flex items-center gap-1 font-medium text-[var(--accent-primary)]">
-              {type === 'visit' ? (
-                <Calendar className="w-3.5 h-3.5" />
-              ) : (
-                <ClipboardList className="w-3.5 h-3.5" />
-              )}
-              <span>{type === 'visit' ? 'Site visit request' : 'Enquiry'}</span>
-            </span>
-            {isUnread && (
-              <span className="px-2 py-0.5 rounded-md bg-[var(--bg-tint)] text-[var(--accent-primary)] text-[13px] font-semibold">
-                New
-              </span>
-            )}
-            {relativeTime && (
-              <>
-                <span aria-hidden="true">&middot;</span>
-                <span
-                  title={exactDate || undefined}
-                  className="inline-flex items-center gap-1 tabular-nums text-[var(--text-secondary)] font-medium"
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>{relativeTime}</span>
-                </span>
-              </>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)] break-anywhere leading-snug">
-              {name}
-            </h2>
-            <ChevronDown
-              className={`w-4 h-4 text-[var(--text-muted)] shrink-0 transition-transform duration-200 ${
-                isOpen ? 'rotate-180' : ''
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          {selectMode && onToggleSelect && (
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={selected}
+              aria-label={`Select ${type === 'visit' ? 'visit request' : 'enquiry'} from ${name}`}
+              onClick={onToggleSelect}
+              className={`min-h-[48px] min-w-[48px] rounded-xl border inline-flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                selected
+                  ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)]'
+                  : 'border-[var(--border-input)] bg-[var(--bg-canvas)] text-transparent'
               }`}
-            />
-          </div>
-
-          <p className="text-sm text-[var(--text-secondary)] break-anywhere">
-            <span className="font-medium">{subject}</span>
-            {email ? ` · ${email}` : ''}
-          </p>
-
-          {visitSchedule && (
-            <p className="text-sm font-semibold text-[var(--accent-primary)] tabular-nums">
-              Preferred visit: {visitSchedule}
-            </p>
+            >
+              <Check className="w-5 h-5" />
+            </button>
           )}
-        </button>
+          <button
+            type="button"
+            onClick={handleOpenCard}
+            aria-expanded={isOpen}
+            className="space-y-1 min-w-0 flex-1 text-left cursor-pointer"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--text-muted)]">
+              {isUnread && (
+                <span
+                  aria-label="Unread enquiry"
+                  className="w-2.5 h-2.5 rounded-full bg-[var(--accent-primary)] shrink-0"
+                />
+              )}
+              <span className="inline-flex items-center gap-1 font-medium text-[var(--accent-primary)]">
+                {type === 'visit' ? (
+                  <Calendar className="w-3.5 h-3.5" />
+                ) : (
+                  <ClipboardList className="w-3.5 h-3.5" />
+                )}
+                <span>{type === 'visit' ? 'Site visit request' : 'Enquiry'}</span>
+              </span>
+              {isUnread && (
+                <span className="px-2 py-0.5 rounded-md bg-[var(--bg-tint)] text-[var(--accent-primary)] text-[13px] font-semibold">
+                  New
+                </span>
+              )}
+              {relativeTime && (
+                <>
+                  <span aria-hidden="true">&middot;</span>
+                  <span
+                    title={exactDate || undefined}
+                    className="inline-flex items-center gap-1 tabular-nums text-[var(--text-secondary)] font-medium"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{relativeTime}</span>
+                  </span>
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)] break-anywhere leading-snug">
+                {name}
+              </h2>
+              <ChevronDown
+                className={`w-4 h-4 text-[var(--text-muted)] shrink-0 transition-transform duration-200 ${
+                  isOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </div>
+
+            <p className="text-sm text-[var(--text-secondary)] break-anywhere">
+              <span className="font-medium">{subject}</span>
+              {email ? ` · ${email}` : ''}
+            </p>
+
+            {visitSchedule && (
+              <p className="text-sm font-semibold text-[var(--accent-primary)] tabular-nums">
+                Preferred visit: {visitSchedule}
+              </p>
+            )}
+          </button>
+        </div>
 
         {/* Colour-coded Status Chip Selector: New / Contacted / Done */}
         <div
@@ -5463,7 +5755,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
                   setIsOpen(true);
                   void onSave(st, note);
                 }}
-                className={`min-h-[44px] px-3.5 rounded-full border text-[13px] font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${unifiedChipStyle(
+                className={`min-h-[48px] px-3.5 rounded-full border text-[13px] font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${unifiedChipStyle(
                   st,
                   active
                 )}`}
@@ -5476,18 +5768,53 @@ const OwnerUnifiedEnquiryCard: React.FC<{
         </div>
       </div>
 
-      {!isOpen ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <button
-            type="button"
-            onClick={handleOpenCard}
-            className="min-h-[44px] px-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--bg-tint)]/30 text-sm font-semibold text-[var(--accent-primary)] inline-flex items-center gap-1.5 cursor-pointer"
-          >
-            <span>Open enquiry</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+      {/* Always-visible 1-tap actions: WhatsApp, Call/Open, Delete */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1">
+        <div className="flex flex-wrap items-center gap-2">
+          {waHref && (
+            <a
+              href={waHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-primary-lux min-h-[48px] px-4 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>WhatsApp</span>
+            </a>
+          )}
+          {phone && (
+            <a
+              href={`tel:${phone.replace(/\s+/g, '')}`}
+              className="min-h-[48px] px-4 rounded-full border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-semibold text-[var(--text-primary)] inline-flex items-center gap-2 tabular-nums"
+            >
+              <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
+              <span>Call {phone}</span>
+            </a>
+          )}
+          {!isOpen && (
+            <button
+              type="button"
+              onClick={handleOpenCard}
+              className="min-h-[48px] px-4 rounded-xl border border-[var(--accent-primary)]/40 bg-[var(--bg-tint)]/30 text-sm font-semibold text-[var(--accent-primary)] inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <span>Open</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          )}
         </div>
-      ) : (
+
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label={`Delete ${type === 'visit' ? 'visit request' : 'enquiry'} from ${name}`}
+          className="min-h-[48px] px-4 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-sm font-semibold text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
+        >
+          <Trash2 className="w-4 h-4" />
+          <span>Delete</span>
+        </button>
+      </div>
+
+      {isOpen && (
         <>
           {propertySlug && (
             <Link
@@ -5506,32 +5833,6 @@ const OwnerUnifiedEnquiryCard: React.FC<{
             </p>
           )}
 
-          {/* Big Call and WhatsApp Buttons */}
-          {(phone || waHref) && (
-            <div className="flex flex-wrap items-center gap-2.5">
-              {phone && (
-                <a
-                  href={`tel:${phone.replace(/\s+/g, '')}`}
-                  className="min-h-[46px] px-5 rounded-full border border-[var(--border-input)] hover:border-[var(--border-strong)] bg-[var(--bg-canvas)] text-sm font-semibold text-[var(--text-primary)] inline-flex items-center gap-2 tabular-nums"
-                >
-                  <Phone className="w-4 h-4 text-[var(--accent-primary)]" />
-                  <span>Call {phone}</span>
-                </a>
-              )}
-              {waHref && (
-                <a
-                  href={waHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-primary-lux min-h-[46px] px-5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center gap-2"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  <span>WhatsApp</span>
-                </a>
-              )}
-            </div>
-          )}
-
           {/* Private Note */}
           <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-[var(--border-hairline)]">
             <input
@@ -5540,7 +5841,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
               onChange={(e) => setNote(e.target.value)}
               placeholder="Add a note for yourself or the client..."
               aria-label={`Note for ${name}`}
-              className="flex-1 min-h-[44px] px-3.5 py-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
+              className="flex-1 min-h-[48px] px-3.5 py-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)]"
             />
             <button
               type="button"
@@ -5552,7 +5853,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
                 setJustSaved(true);
                 window.setTimeout(() => setJustSaved(false), 2500);
               }}
-              className="min-h-[44px] px-4 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+              className="min-h-[48px] px-4 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
             >
               <Check className="w-4 h-4" />
               <span>{justSaved ? 'Saved' : 'Save note'}</span>

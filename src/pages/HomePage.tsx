@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
   AnimatePresence,
   motion,
@@ -19,16 +19,13 @@ import {
   Compass,
   FileCheck2,
   Home,
-  IndianRupee,
   KeyRound,
   Loader2,
   Mail,
   MapPin,
   MessageCircle,
   Phone,
-  Search,
   Tag,
-  X,
 } from 'lucide-react';
 import { LUX_EASE } from '../lib/motion';
 import { useApp } from '../context/AppContext';
@@ -48,6 +45,14 @@ import {
   validateInquiryFields,
   type InquiryFieldErrors,
 } from '../lib/realtyLogic';
+import {
+  buildSmartPropertyFilters,
+  collectUniqueLocations,
+  countActiveFilters,
+  formatPropertiesCount,
+  SMART_BUDGET_RANGES,
+  type SmartSearchState,
+} from '../lib/searchHelpers';
 import { useKeyboardSafeForm } from '../lib/formKeyboard';
 import { DEFAULT_SERVICES, DEMO_PROPERTIES } from '../lib/demoData';
 import { resolveLocalResponsiveSources } from '../lib/imageUtils';
@@ -61,17 +66,8 @@ import {
 } from '../components/PropertyCardSkeleton';
 import { ReviewsCarousel } from '../components/ReviewsCarousel';
 import { PropertyImage } from '../components/PropertyImage';
+import { SmartSearchBlock } from '../components/SmartSearchBlock';
 import type { RecommendedProperty } from '../lib/realtyLogic';
-
-const BUDGET_RANGES = [
-  { label: 'Any budget', min: '', max: '' },
-  { label: 'Up to ₹30 Lakhs', min: '', max: '3000000' },
-  { label: '₹30L – ₹60 Lakhs', min: '3000000', max: '6000000' },
-  { label: '₹60L – ₹1 Crore', min: '6000000', max: '10000000' },
-  { label: 'Above ₹1 Crore', min: '10000000', max: '' },
-  { label: 'Rent up to ₹25,000/mo', min: '', max: '25000' },
-  { label: 'Rent ₹25,000 – ₹60,000/mo', min: '25000', max: '60000' },
-];
 
 const SERVICE_TILE_VISUALS: Record<
   string,
@@ -162,7 +158,6 @@ function splitHeadlineLines(headline: string): string[] {
 
 export const HomePage: React.FC = () => {
   const { settings, user, openAuthModal, showToast } = useApp();
-  const navigate = useNavigate();
   const prefersReduced = !!useReducedMotion();
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 768 : true
@@ -202,6 +197,7 @@ export const HomePage: React.FC = () => {
   const heroRef = useRef<HTMLElement>(null);
   const statementRef = useRef<HTMLElement>(null);
   const aboutImgRef = useRef<HTMLDivElement>(null);
+  const resultsSectionRef = useRef<HTMLElement>(null);
 
   const { scrollYProgress: heroScroll } = useScroll({
     target: heroRef,
@@ -240,11 +236,13 @@ export const HomePage: React.FC = () => {
   );
 
   // Smart search state
-  const [searchLocation, setSearchLocation] = useState('All');
-  const [searchType, setSearchType] = useState('All');
-  const [searchListing, setSearchListing] = useState<'All' | 'Buy' | 'Rent'>('All');
-  const [searchBudgetIdx, setSearchBudgetIdx] = useState(0);
-  const [searchSheetOpen, setSearchSheetOpen] = useState(false);
+  const [searchState, setSearchState] = useState<SmartSearchState>({
+    query: '',
+    listing: 'All',
+    location: 'All',
+    propertyType: 'All',
+    budgetIdx: 0,
+  });
 
   // Properties section tab state ('all' | 'featured')
   const [propertyTab, setPropertyTab] = useState<'all' | 'featured'>('all');
@@ -284,20 +282,6 @@ export const HomePage: React.FC = () => {
       if (!cEmail) setCEmail(user.email || '');
     }
   }, [user]);
-
-  useEffect(() => {
-    if (!searchSheetOpen) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSearchSheetOpen(false);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [searchSheetOpen]);
 
   useEffect(() => {
     let active = true;
@@ -364,12 +348,35 @@ export const HomePage: React.FC = () => {
     [properties]
   );
 
+  const hasActiveSearchFilters = useMemo(
+    () => countActiveFilters(searchState) > 0,
+    [searchState]
+  );
+
+  const filteredAvailableProperties = useMemo(
+    () =>
+      filterAndSortProperties(
+        properties,
+        buildSmartPropertyFilters(searchState),
+        { publicOnly: true, allowClosedInAll: false }
+      ),
+    [properties, searchState]
+  );
+
   const displayedProperties = useMemo(() => {
+    if (hasActiveSearchFilters) {
+      return filteredAvailableProperties;
+    }
     if (propertyTab === 'featured') {
       return activeProperties.filter((p) => p.is_featured);
     }
     return activeProperties;
-  }, [activeProperties, propertyTab]);
+  }, [
+    hasActiveSearchFilters,
+    filteredAvailableProperties,
+    activeProperties,
+    propertyTab,
+  ]);
 
   const recommendedCarouselData = useMemo(() => {
     const reasonsById: Record<string, string[]> = {};
@@ -397,18 +404,53 @@ export const HomePage: React.FC = () => {
     return { items, reasonsById };
   }, [user, recommendations, activeProperties]);
 
-  const handleSmartSearch = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    setSearchSheetOpen(false);
-    const params = new URLSearchParams();
-    if (searchLocation !== 'All') params.set('location', searchLocation);
-    if (searchType !== 'All') params.set('category', searchType);
-    if (searchListing !== 'All') params.set('type', searchListing);
-    const budget = BUDGET_RANGES[searchBudgetIdx];
-    if (budget?.min) params.set('minPrice', budget.min);
-    if (budget?.max) params.set('maxPrice', budget.max);
-    navigate(`/properties?${params.toString()}`);
+  const scrollToResults = () => {
+    window.requestAnimationFrame(() => {
+      resultsSectionRef.current?.scrollIntoView({
+        behavior: prefersReduced ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    });
   };
+
+  const handleSearchSubmit = (overrideState?: SmartSearchState) => {
+    if (overrideState) {
+      setSearchState(overrideState);
+    }
+    setPropertyTab('all');
+    scrollToResults();
+  };
+
+  const handleClearAllSearch = () => {
+    setSearchState({
+      query: '',
+      listing: 'All',
+      location: 'All',
+      propertyType: 'All',
+      budgetIdx: 0,
+    });
+  };
+
+  const viewAllPropertiesHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (searchState.query.trim()) params.set('q', searchState.query.trim());
+    if (searchState.location !== 'All') {
+      params.set('location', searchState.location);
+    }
+    if (searchState.propertyType !== 'All') {
+      params.set('category', searchState.propertyType);
+    }
+    if (searchState.listing !== 'All') params.set('type', searchState.listing);
+    const budget = SMART_BUDGET_RANGES[searchState.budgetIdx];
+    if (budget?.min !== '' && budget?.min !== undefined) {
+      params.set('minPrice', String(budget.min));
+    }
+    if (budget?.max !== '' && budget?.max !== undefined) {
+      params.set('maxPrice', String(budget.max));
+    }
+    const qs = params.toString();
+    return qs ? `/properties?${qs}` : '/properties';
+  }, [searchState]);
 
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -473,13 +515,21 @@ export const HomePage: React.FC = () => {
   const address =
     settings?.address ||
     'Sevoke Road, Ward Number 13, Dasrath Pally, Bhanu Nagar, Siliguri, West Bengal 734001.';
-  const locations = settings?.locations || [
-    'Siliguri',
-    'Sevoke Road',
-    'Bhanu Nagar',
-    'Haiderpara',
-    'Gugni More',
-  ];
+  const uniqueLocations = useMemo(
+    () =>
+      collectUniqueLocations(
+        settings?.locations || [
+          'Siliguri',
+          'Sevoke Road',
+          'Bhanu Nagar',
+          'Haiderpara',
+          'Gugni More',
+        ],
+        activeProperties
+      ),
+    [settings?.locations, activeProperties]
+  );
+
   const propertyTypes = settings?.property_types || [
     'Flats / Apartments',
     'Villas',
@@ -496,14 +546,6 @@ export const HomePage: React.FC = () => {
     settings?.hero_image_url ||
     '/src/assets/images/hero_siliguri_villa_1795102916572.jpg';
   const localHeroSources = resolveLocalResponsiveSources(heroSrc);
-
-  const mobileLocationLabel =
-    searchLocation === 'All' ? 'Location' : searchLocation;
-  const mobileTypeLabel = searchType === 'All' ? 'Type' : searchType;
-  const mobileBudgetLabel =
-    searchBudgetIdx === 0
-      ? 'Budget'
-      : BUDGET_RANGES[searchBudgetIdx]?.label || 'Budget';
 
   return (
     <main>
@@ -797,434 +839,18 @@ export const HomePage: React.FC = () => {
         </section>
       )}
 
-      {/* 2. SMART SEARCH */}
-      <motion.section
-        id="search"
-        aria-label="Property search"
-        initial={prefersReduced ? false : { opacity: 0, y: 14 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.15 }}
-        transition={{ duration: 0.5, ease: LUX_EASE }}
-        className="fluid-container relative z-20 pt-[clamp(1.75rem,4vw,2.75rem)] pb-2 scroll-mt-24"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-          <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.125rem)] font-medium text-[var(--text-primary)] leading-[1.15]">
-            Search
-          </h2>
-
-          {/* Sleek Pill Segmented Tabs ("Buy", "Rent") on Mobile */}
-          <div
-            role="group"
-            aria-label="Buy or rent"
-            className="md:hidden inline-grid grid-cols-2 gap-1 w-full rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-subtle)]"
-          >
-            <button
-              type="button"
-              aria-pressed={searchListing === 'Buy'}
-              onClick={() =>
-                setSearchListing((prev) => (prev === 'Buy' ? 'All' : 'Buy'))
-              }
-              className={`tap-press min-h-[44px] px-4 rounded-full text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer ${
-                searchListing === 'Buy'
-                  ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <Home className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>Buy</span>
-            </button>
-            <button
-              type="button"
-              aria-pressed={searchListing === 'Rent'}
-              onClick={() =>
-                setSearchListing((prev) => (prev === 'Rent' ? 'All' : 'Rent'))
-              }
-              className={`tap-press min-h-[44px] px-4 rounded-full text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer ${
-                searchListing === 'Rent'
-                  ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              <KeyRound className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>Rent</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Compact Modern Real Estate Search Bar */}
-        <div
-          data-testid="mobile-smart-search-card"
-          className="md:hidden rounded-[22px] bg-[var(--bg-surface)] border border-[var(--border-input)] shadow-[var(--shadow-subtle)] p-2.5 space-y-2.5"
-        >
-          <button
-            type="button"
-            data-testid="mobile-smart-search-trigger"
-            aria-haspopup="dialog"
-            aria-expanded={searchSheetOpen}
-            onClick={() => setSearchSheetOpen(true)}
-            className="tap-press w-full rounded-2xl bg-[var(--bg-canvas)]/75 hover:bg-[var(--bg-canvas)] border border-[var(--border-hairline)] p-2.5 grid grid-cols-1 min-[375px]:grid-cols-2 gap-2.5 text-left transition-colors cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5 min-w-0 px-1">
-              <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium text-[var(--text-muted)] leading-tight">
-                  Location
-                </span>
-                <span className="block text-sm font-semibold text-[var(--text-primary)] truncate">
-                  {mobileLocationLabel === 'Location'
-                    ? 'All areas'
-                    : mobileLocationLabel}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2.5 min-w-0 px-1 pt-2 min-[375px]:pt-0 border-t min-[375px]:border-t-0 min-[375px]:border-l border-[var(--border-hairline)] min-[375px]:pl-3">
-              <Home className="w-4 h-4 text-[var(--accent-primary)] shrink-0" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium text-[var(--text-muted)] leading-tight">
-                  Property type
-                </span>
-                <span className="block text-sm font-semibold text-[var(--text-primary)] truncate">
-                  {mobileTypeLabel === 'Type' ? 'All types' : mobileTypeLabel}
-                  {mobileBudgetLabel !== 'Budget' ? ` · ${mobileBudgetLabel}` : ''}
-                </span>
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleSmartSearch()}
-            aria-label="Search properties"
-            className="btn-primary-lux tap-press w-full min-h-[46px] px-5 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-          >
-            <Search className="w-4 h-4 shrink-0" aria-hidden="true" />
-            <span>Search properties</span>
-          </button>
-        </div>
-
-        {/* Desktop Single-Row Modern Pill Search Bar */}
-        <form
-          onSubmit={handleSmartSearch}
-          data-allow-floating="true"
-          className="hidden md:block search-bar-container min-w-0 max-w-full rounded-[26px] lg:rounded-full bg-[var(--bg-surface)] border border-[var(--border-input)] shadow-[var(--shadow-elevated)] p-2.5 lg:p-2"
-        >
-          <div className="search-bar-grid">
-            <div className="search-bar-field flex items-center gap-3 px-3.5 lg:px-4 py-1.5 min-w-0 min-h-[60px]">
-              <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-              <div className="min-w-0 flex-1">
-                <label
-                  htmlFor="search-location"
-                  className="block text-[13px] font-semibold text-[var(--text-secondary)]"
-                >
-                  Location
-                </label>
-                <select
-                  id="search-location"
-                  value={searchLocation}
-                  onChange={(e) => setSearchLocation(e.target.value)}
-                  className="w-full min-h-[44px] bg-transparent text-base font-medium text-[var(--text-primary)] focus:outline-none cursor-pointer truncate"
-                >
-                  <option value="All" className="bg-[var(--bg-surface)]">
-                    All locations
-                  </option>
-                  {locations.map((loc) => (
-                    <option
-                      key={loc}
-                      value={loc}
-                      className="bg-[var(--bg-surface)]"
-                    >
-                      {loc}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="search-bar-field flex items-center gap-3 px-3.5 lg:px-4 py-1.5 min-w-0 min-h-[60px]">
-              <Home className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-              <div className="min-w-0 flex-1">
-                <label
-                  htmlFor="search-type"
-                  className="block text-[13px] font-semibold text-[var(--text-secondary)]"
-                >
-                  Property type
-                </label>
-                <select
-                  id="search-type"
-                  value={searchType}
-                  onChange={(e) => setSearchType(e.target.value)}
-                  className="w-full min-h-[44px] bg-transparent text-base font-medium text-[var(--text-primary)] focus:outline-none cursor-pointer truncate"
-                >
-                  <option value="All" className="bg-[var(--bg-surface)]">
-                    All types
-                  </option>
-                  {propertyTypes.map((t) => (
-                    <option
-                      key={t}
-                      value={t}
-                      className="bg-[var(--bg-surface)]"
-                    >
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="search-bar-field flex items-center gap-3 px-3.5 lg:px-4 py-1.5 min-w-0 min-h-[60px]">
-              <IndianRupee className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
-              <div className="min-w-0 flex-1">
-                <label
-                  htmlFor="search-budget"
-                  className="block text-[13px] font-semibold text-[var(--text-secondary)]"
-                >
-                  Budget
-                </label>
-                <select
-                  id="search-budget"
-                  value={searchBudgetIdx}
-                  onChange={(e) => setSearchBudgetIdx(Number(e.target.value))}
-                  className="w-full min-h-[44px] bg-transparent text-base font-medium text-[var(--text-primary)] focus:outline-none cursor-pointer tabular-nums truncate"
-                >
-                  {BUDGET_RANGES.map((b, idx) => (
-                    <option
-                      key={b.label}
-                      value={idx}
-                      className="bg-[var(--bg-surface)]"
-                    >
-                      {b.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="search-bar-field flex items-center justify-center px-3 lg:px-3.5 py-1.5 min-w-0 min-h-[60px]">
-              <div
-                role="group"
-                aria-label="Buy or rent"
-                className="w-full inline-grid grid-cols-2 gap-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-1"
-              >
-                <button
-                  type="button"
-                  aria-pressed={searchListing === 'Buy'}
-                  onClick={() =>
-                    setSearchListing((prev) => (prev === 'Buy' ? 'All' : 'Buy'))
-                  }
-                  className={`tap-press min-h-[44px] px-3.5 rounded-full text-[13px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                    searchListing === 'Buy'
-                      ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  Buy
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={searchListing === 'Rent'}
-                  onClick={() =>
-                    setSearchListing((prev) => (prev === 'Rent' ? 'All' : 'Rent'))
-                  }
-                  className={`tap-press min-h-[44px] px-3.5 rounded-full text-[13px] font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                    searchListing === 'Rent'
-                      ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  Rent
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="search-bar-submit btn-primary-lux tap-press min-h-[52px] px-7 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap shadow-xs"
-            >
-              <Search className="w-4 h-4 shrink-0" />
-              <span>Search</span>
-            </button>
-          </div>
-        </form>
-
-        {/* Mobile Smart Search Bottom Sheet Modal */}
-        <AnimatePresence>
-          {searchSheetOpen && (
-            <motion.div
-              key="mobile-search-sheet-backdrop"
-              onClick={() => setSearchSheetOpen(false)}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2, ease: LUX_EASE }}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Search properties"
-              className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-xs"
-            >
-              <motion.div
-                key="mobile-search-sheet-panel"
-                onClick={(e) => e.stopPropagation()}
-                initial={
-                  prefersReduced
-                    ? { opacity: 0 }
-                    : { opacity: 0, y: 24, scale: 0.98 }
-                }
-                animate={
-                  prefersReduced
-                    ? { opacity: 1 }
-                    : { opacity: 1, y: 0, scale: 1 }
-                }
-                exit={
-                  prefersReduced
-                    ? { opacity: 0 }
-                    : { opacity: 0, y: 18, scale: 0.98 }
-                }
-                transition={{ duration: 0.24, ease: LUX_EASE }}
-                className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-t-[24px] sm:rounded-[24px] bg-[var(--bg-surface)] border border-[var(--border-hairline)] p-5 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] shadow-[var(--shadow-elevated)] space-y-4"
-              >
-                <div
-                  aria-hidden="true"
-                  className="sm:hidden mx-auto h-1 w-10 rounded-full bg-[var(--border-input)]"
-                />
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-display text-xl font-medium text-[var(--text-primary)]">
-                    Search properties
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => setSearchSheetOpen(false)}
-                    aria-label="Close search filters"
-                    className="tap-press h-11 w-11 inline-flex items-center justify-center rounded-full bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <form onSubmit={handleSmartSearch} className="space-y-4">
-                  <div>
-                    <label
-                      htmlFor="mobile-search-location"
-                      className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
-                    >
-                      Location
-                    </label>
-                    <select
-                      id="mobile-search-location"
-                      value={searchLocation}
-                      onChange={(e) => setSearchLocation(e.target.value)}
-                      className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                    >
-                      <option value="All" className="bg-[var(--bg-surface)]">
-                        All Siliguri areas
-                      </option>
-                      {locations.map((loc) => (
-                        <option
-                          key={loc}
-                          value={loc}
-                          className="bg-[var(--bg-surface)]"
-                        >
-                          {loc}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="mobile-search-type"
-                      className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
-                    >
-                      Property type
-                    </label>
-                    <select
-                      id="mobile-search-type"
-                      value={searchType}
-                      onChange={(e) => setSearchType(e.target.value)}
-                      className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                    >
-                      <option value="All" className="bg-[var(--bg-surface)]">
-                        All property types
-                      </option>
-                      {propertyTypes.map((t) => (
-                        <option
-                          key={t}
-                          value={t}
-                          className="bg-[var(--bg-surface)]"
-                        >
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="mobile-search-budget"
-                      className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
-                    >
-                      Budget range
-                    </label>
-                    <select
-                      id="mobile-search-budget"
-                      value={searchBudgetIdx}
-                      onChange={(e) => setSearchBudgetIdx(Number(e.target.value))}
-                      className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums focus:outline-none focus:border-[var(--accent-primary)]"
-                    >
-                      {BUDGET_RANGES.map((b, idx) => (
-                        <option
-                          key={b.label}
-                          value={idx}
-                          className="bg-[var(--bg-surface)]"
-                        >
-                          {b.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="mobile-search-listing"
-                      className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
-                    >
-                      Buy or rent
-                    </label>
-                    <select
-                      id="mobile-search-listing"
-                      value={searchListing}
-                      onChange={(e) =>
-                        setSearchListing(
-                          e.target.value as 'All' | 'Buy' | 'Rent'
-                        )
-                      }
-                      className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                    >
-                      <option value="All" className="bg-[var(--bg-surface)]">
-                        Buy &amp; rent
-                      </option>
-                      <option value="Buy" className="bg-[var(--bg-surface)]">
-                        Buy property
-                      </option>
-                      <option value="Rent" className="bg-[var(--bg-surface)]">
-                        Rent property
-                      </option>
-                    </select>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="btn-primary-lux tap-press w-full min-h-[48px] px-6 py-3 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-base font-medium inline-flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <Search className="w-4 h-4" />
-                    <span>Search</span>
-                  </button>
-                </form>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.section>
+      {/* 2. MODERN SMART SEARCH */}
+      <SmartSearchBlock
+        searchState={searchState}
+        onChangeState={setSearchState}
+        onSearchSubmit={handleSearchSubmit}
+        onClearAll={handleClearAllSearch}
+        activeProperties={activeProperties}
+        serviceLocations={uniqueLocations}
+        propertyTypes={propertyTypes}
+        liveMatchingCount={filteredAvailableProperties.length}
+        prefersReduced={prefersReduced}
+      />
 
       {/* 3. RECOMMENDED PROPERTIES — 3D COVER FLOW */}
       <motion.section
@@ -1233,7 +859,7 @@ export const HomePage: React.FC = () => {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.1 }}
         transition={{ duration: 0.6, ease: LUX_EASE }}
-        className="fluid-container scroll-mt-28 pt-[clamp(2rem,4vw,3.25rem)] pb-[clamp(3rem,6vw,5.5rem)]"
+        className="fluid-container scroll-mt-28 pt-[clamp(1.25rem,3vw,2.5rem)] pb-[clamp(3rem,6vw,5.5rem)]"
       >
         {loadingProps ? (
           <div className="space-y-6">
@@ -1316,9 +942,10 @@ export const HomePage: React.FC = () => {
         </div>
       </section>
 
-      {/* 5. PROPERTIES SECTION WITH ALL / FEATURED SWITCH */}
+      {/* 5. PROPERTIES SECTION WITH ALL / FEATURED SWITCH & LIVE SEARCH RESULTS */}
       <motion.section
         id="available-properties"
+        ref={resultsSectionRef}
         initial={prefersReduced ? false : { opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.08 }}
@@ -1328,47 +955,59 @@ export const HomePage: React.FC = () => {
           <div className="fluid-container space-y-[clamp(1.75rem,3.5vw,2.5rem)]">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex flex-wrap items-center justify-between gap-4 flex-1 min-w-0">
-                <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.125rem)] font-medium text-[var(--text-primary)] leading-[1.15]">
-                  Properties
-                </h2>
-
-                {/* Switch: All property | Featured property */}
-                <div
-                  role="tablist"
-                  aria-label="Filter home properties"
-                  className="inline-grid grid-cols-2 gap-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-1 shrink-0"
-                >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={propertyTab === 'all'}
-                    onClick={() => setPropertyTab('all')}
-                    className={`tap-press min-h-[44px] px-3.5 sm:px-4 rounded-full text-[13px] sm:text-sm font-medium whitespace-nowrap cursor-pointer ${
-                      propertyTab === 'all'
-                        ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
-                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                    }`}
-                  >
-                    All property
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={propertyTab === 'featured'}
-                    onClick={() => setPropertyTab('featured')}
-                    className={`tap-press min-h-[44px] px-3.5 sm:px-4 rounded-full text-[13px] sm:text-sm font-medium whitespace-nowrap cursor-pointer ${
-                      propertyTab === 'featured'
-                        ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
-                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                    }`}
-                  >
-                    Featured property
-                  </button>
+                <div className="flex flex-wrap items-baseline gap-3 min-w-0">
+                  <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.125rem)] font-medium text-[var(--text-primary)] leading-[1.15]">
+                    {hasActiveSearchFilters ? 'Matching properties' : 'Properties'}
+                  </h2>
+                  {hasActiveSearchFilters && (
+                    <span
+                      data-testid="home-search-results-count"
+                      className="text-sm font-medium text-[var(--text-muted)] tabular-nums"
+                    >
+                      {formatPropertiesCount(displayedProperties.length)}
+                    </span>
+                  )}
                 </div>
+
+                {/* Switch: All property | Featured property (hidden while search filter is active) */}
+                {!hasActiveSearchFilters && (
+                  <div
+                    role="tablist"
+                    aria-label="Filter home properties"
+                    className="inline-grid grid-cols-2 gap-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-1 shrink-0"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={propertyTab === 'all'}
+                      onClick={() => setPropertyTab('all')}
+                      className={`tap-press min-h-[44px] px-3.5 sm:px-4 rounded-full text-[13px] sm:text-sm font-medium whitespace-nowrap cursor-pointer ${
+                        propertyTab === 'all'
+                          ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      All property
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={propertyTab === 'featured'}
+                      onClick={() => setPropertyTab('featured')}
+                      className={`tap-press min-h-[44px] px-3.5 sm:px-4 rounded-full text-[13px] sm:text-sm font-medium whitespace-nowrap cursor-pointer ${
+                        propertyTab === 'featured'
+                          ? 'bg-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] shadow-xs'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      Featured property
+                    </button>
+                  </div>
+                )}
               </div>
 
               <Link
-                to="/properties"
+                to={viewAllPropertiesHref}
                 className="tap-press min-h-[44px] px-5 py-2.5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-2 self-start md:self-auto whitespace-nowrap shrink-0"
               >
                 <span>View all properties</span>
@@ -1385,11 +1024,21 @@ export const HomePage: React.FC = () => {
             ) : displayedProperties.length === 0 ? (
               <div className="rounded-[clamp(1.25rem,3vw,1.75rem)] border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <p className="text-base text-[var(--text-secondary)]">
-                  {propertyTab === 'featured'
+                  {hasActiveSearchFilters
+                    ? 'No properties match your active search filters.'
+                    : propertyTab === 'featured'
                     ? 'No featured properties are marked right now.'
                     : 'No properties are published yet. Please check back soon or contact our Siliguri office.'}
                 </p>
-                {propertyTab === 'featured' ? (
+                {hasActiveSearchFilters ? (
+                  <button
+                    type="button"
+                    onClick={handleClearAllSearch}
+                    className="btn-primary-lux tap-press min-h-[44px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-medium self-start sm:self-auto cursor-pointer whitespace-nowrap"
+                  >
+                    Clear filters
+                  </button>
+                ) : propertyTab === 'featured' ? (
                   <button
                     type="button"
                     onClick={() => setPropertyTab('all')}
@@ -1408,7 +1057,7 @@ export const HomePage: React.FC = () => {
               </div>
             ) : (
               <div className="fluid-grid-cards">
-                {displayedProperties.slice(0, 6).map((prop, idx) => (
+                {displayedProperties.slice(0, hasActiveSearchFilters ? 12 : 6).map((prop, idx) => (
                   <motion.div
                     key={prop.id}
                     initial={prefersReduced ? false : { opacity: 0, y: 14 }}
