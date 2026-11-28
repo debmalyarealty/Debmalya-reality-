@@ -168,11 +168,16 @@ export function mapSignInAuthError(rawMessage: string | undefined | null): strin
   }
 
   if (
+    lower.includes('no internet') ||
+    lower.includes('offline') ||
     lower.includes('failed to fetch') ||
     lower.includes('network') ||
     lower.includes('timeout')
   ) {
-    return 'Unable to reach the server right now. Please check your connection and try again.';
+    if (lower.includes('no internet')) {
+      return msg;
+    }
+    return 'No internet connection, please try again';
   }
 
   return msg || 'Incorrect email or password.';

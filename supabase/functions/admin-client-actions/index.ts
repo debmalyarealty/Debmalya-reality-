@@ -83,24 +83,18 @@ Deno.serve(async (req: Request) => {
   } = await supabaseAdmin.auth.getUser(token);
 
   if (authError || !caller) {
-    return jsonResponse(
-      {
-        error: `Invalid or expired session: ${
-          authError?.message || 'unable to verify caller JWT'
-        }.`,
-      },
-      401
-    );
+    const msg = `Invalid or expired session: ${
+      authError?.message || 'unable to verify caller JWT'
+    }.`;
+    console.error('[admin-client-actions] 401:', msg);
+    return jsonResponse({ error: msg }, 401);
   }
 
   const callerId = caller.id || jwtSub;
   if (!UUID_REGEX.test(callerId)) {
-    return jsonResponse(
-      {
-        error: `Owner check failed: JWT did not contain a valid user id (got '${callerId}').`,
-      },
-      403
-    );
+    const msg = `Owner check failed: JWT did not contain a valid user id (got '${callerId}').`;
+    console.error('[admin-client-actions] 403:', msg);
+    return jsonResponse({ error: msg }, 403);
   }
 
   // Look up caller's role in public.profiles using the service-role client
@@ -111,37 +105,28 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
 
   if (callerProfileErr) {
-    return jsonResponse(
-      {
-        error: `Owner check failed: error querying public.profiles for user ${callerId} (${
-          caller.email || 'no email'
-        }): ${callerProfileErr.message}`,
-      },
-      403
-    );
+    const msg = `Owner check failed: error querying public.profiles for user ${callerId} (${
+      caller.email || 'no email'
+    }): ${callerProfileErr.message}`;
+    console.error('[admin-client-actions] 403:', msg);
+    return jsonResponse({ error: msg }, 403);
   }
 
   if (!callerProfile) {
-    return jsonResponse(
-      {
-        error: `Owner check failed: no profile row found in public.profiles for user ${callerId} (${
-          caller.email || 'no email'
-        }).`,
-      },
-      403
-    );
+    const msg = `Owner check failed: no profile row found in public.profiles for user ${callerId} (${
+      caller.email || 'no email'
+    }).`;
+    console.error('[admin-client-actions] 403:', msg);
+    return jsonResponse({ error: msg }, 403);
   }
 
   const normalizedRole = String(callerProfile.role || '').trim().toLowerCase();
   if (normalizedRole !== 'owner') {
-    return jsonResponse(
-      {
-        error: `Owner check failed: user ${callerId} (${
-          caller.email || callerProfile.email || 'no email'
-        }) has role '${callerProfile.role ?? 'null'}' in public.profiles, expected 'owner'.`,
-      },
-      403
-    );
+    const msg = `Owner check failed: user ${callerId} (${
+      caller.email || callerProfile.email || 'no email'
+    }) has role '${callerProfile.role ?? 'null'}' in public.profiles, expected 'owner'.`;
+    console.error('[admin-client-actions] 403:', msg);
+    return jsonResponse({ error: msg }, 403);
   }
 
   let payload: Record<string, unknown>;
@@ -179,7 +164,8 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    if (clientIds.includes(caller.id)) {
+    const normalizedCallerId = callerId.trim().toLowerCase();
+    if (clientIds.some((id) => id.trim().toLowerCase() === normalizedCallerId)) {
       return jsonResponse(
         { error: 'You cannot delete the active owner account.' },
         403
@@ -196,7 +182,9 @@ Deno.serve(async (req: Request) => {
     }
 
     const profilesList = targetProfiles || [];
-    const nonClient = profilesList.find((p) => p.role !== 'client');
+    const nonClient = profilesList.find(
+      (p) => String(p.role || '').trim().toLowerCase() !== 'client'
+    );
     if (nonClient) {
       return jsonResponse(
         { error: 'Owner accounts cannot be deleted from the client list.' },
@@ -289,7 +277,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: 'Invalid client ID.' }, 400);
     }
 
-    if (clientId === caller.id) {
+    if (clientId.trim().toLowerCase() === callerId.trim().toLowerCase()) {
       return jsonResponse(
         { error: 'Use account settings to update your own owner password.' },
         403
@@ -313,7 +301,10 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: targetErr.message }, 500);
     }
 
-    if (!targetProfile || targetProfile.role !== 'client') {
+    if (
+      !targetProfile ||
+      String(targetProfile.role || '').trim().toLowerCase() !== 'client'
+    ) {
       return jsonResponse(
         { error: 'Client account not found or cannot be modified.' },
         404

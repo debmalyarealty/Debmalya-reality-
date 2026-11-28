@@ -10,6 +10,7 @@ interface FavoriteButtonProps {
   variant?: 'overlay' | 'pill';
   label?: string;
   className?: string;
+  disabled?: boolean;
 }
 
 const BURST_ANGLES = [0, 60, 120, 180, 240, 300];
@@ -21,6 +22,7 @@ export const FavoriteButton: React.FC<FavoriteButtonProps> = ({
   variant = 'overlay',
   label,
   className = '',
+  disabled = false,
 }) => {
   const prefersReduced = useReducedMotion();
   const prevFav = useRef(isFavorite);
@@ -57,13 +59,14 @@ export const FavoriteButton: React.FC<FavoriteButtonProps> = ({
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
-        onToggle();
+        if (!disabled) onToggle();
       }}
       aria-label={ariaLabel}
       aria-pressed={isFavorite}
-      className={`${baseClass} ${className}`}
+      className={`${baseClass} disabled:opacity-60 ${className}`}
     >
       <span className="relative inline-flex items-center justify-center">
         <motion.span animate={iconMotion} className="inline-flex">

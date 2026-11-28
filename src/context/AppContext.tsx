@@ -30,6 +30,11 @@ import { parseSupabaseAuthCallbackUrl } from '../lib/authCallback';
 import { DEFAULT_SITE_SETTINGS } from '../lib/demoData';
 import { initGlobalTapFeedback, LUX_EASE } from '../lib/motion';
 import { markSignInPromptShown } from '../lib/prompts';
+import {
+  onSessionExpired,
+  toUserFriendlyNetworkError,
+  TransientSessionError,
+} from '../lib/networkUtils';
 import type { UserProfile, WebsiteSettings } from '../types/realty';
 
 export type ThemeMode = 'dark' | 'light';
@@ -80,7 +85,7 @@ interface AppContextValue {
   openAuthModal: (mode?: AuthModalMode, options?: OpenAuthModalOptions) => void;
   closeAuthModal: () => void;
   consumeAuthSuccessOverride: () => { suppressRedirect: boolean; onSuccess?: () => void };
-  refreshUser: () => Promise<UserProfile | null>;
+  refreshUser: (options?: { silent?: boolean }) => Promise<UserProfile | null>;
   refreshSettings: () => Promise<void>;
   toggleFavorite: (propertyId: string) => Promise<void>;
   showToast: (text: string, kind?: ToastMessage['kind']) => void;
@@ -133,6 +138,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
   });
+  const userRef = useRef<UserProfile | null>(null);
+  userRef.current = user;
+  const manualLogoutRef = useRef(false);
+  const pendingFavIdsRef = useRef<Set<string>>(new Set());
 
   const enterOwnerWebsiteView = useCallback(() => {
     try {
@@ -291,35 +300,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  const refreshUser = useCallback(async (): Promise<UserProfile | null> => {
-    if (!isSupabaseConfigured || !supabase) {
-      setUser(null);
-      setFavoriteIds([]);
-      setAuthLoading(false);
-      return null;
-    }
-
-    setAuthLoading(true);
-    try {
-      const profile = await getCurrentSessionProfile();
-      setUser(profile);
-      if (profile) {
-        markSignInPromptShown();
-        setFirstVisitPromptOpen(false);
-        const favIds = await fetchUserFavoriteIds(profile.id);
-        setFavoriteIds(favIds);
-      } else {
+  const refreshUser = useCallback(
+    async (options?: { silent?: boolean }): Promise<UserProfile | null> => {
+      if (!isSupabaseConfigured || !supabase) {
+        setUser(null);
         setFavoriteIds([]);
+        setAuthLoading(false);
+        return null;
       }
-      return profile;
-    } catch {
-      setUser(null);
-      setFavoriteIds([]);
-      return null;
-    } finally {
-      setAuthLoading(false);
-    }
-  }, []);
+
+      const shouldShowLoading = !options?.silent || !userRef.current;
+      if (shouldShowLoading) {
+        setAuthLoading(true);
+      }
+      try {
+        const profile = await getCurrentSessionProfile();
+        setUser(profile);
+        if (profile) {
+          markSignInPromptShown();
+          setFirstVisitPromptOpen(false);
+          const favIds = await fetchUserFavoriteIds(profile.id).catch(() => []);
+          setFavoriteIds(favIds);
+        } else {
+          setFavoriteIds([]);
+        }
+        return profile;
+      } catch (err) {
+        if (err instanceof TransientSessionError && userRef.current) {
+          return userRef.current;
+        }
+        setUser(null);
+        setFavoriteIds([]);
+        return null;
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     void refreshSettings();
@@ -462,7 +480,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     void handleInitialAuthCallback();
 
-    if (!isSupabaseConfigured || !supabase) return;
+    const unsubscribeSessionExpired = onSessionExpired((message) => {
+      const expiredMsg = message || 'Your session expired. Please sign in again.';
+      exitOwnerWebsiteView();
+      setNavDrawerOpen(false);
+      setUser(null);
+      setFavoriteIds([]);
+      setAuthLoading(false);
+      showToast(expiredMsg, 'error');
+      setAuthModalNotice(expiredMsg);
+      setAuthModalMode('login');
+      setAuthModalOpen(true);
+    });
+
+    if (!isSupabaseConfigured || !supabase) {
+      return () => {
+        unsubscribeSessionExpired();
+      };
+    }
 
     const {
       data: { subscription },
@@ -472,20 +507,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setAuthModalMode('recovery');
         setAuthModalOpen(true);
       } else if (event === 'SIGNED_OUT') {
+        const hadActiveUser = Boolean(userRef.current);
+        const wasManual = manualLogoutRef.current;
+        manualLogoutRef.current = false;
         exitOwnerWebsiteView();
         setUser(null);
         setFavoriteIds([]);
         setAuthLoading(false);
-      } else if (
-        event === 'SIGNED_IN' ||
-        event === 'TOKEN_REFRESHED' ||
-        event === 'USER_UPDATED'
-      ) {
-        void refreshUser();
+        if (hadActiveUser && !wasManual) {
+          const msg = 'Your session expired. Please sign in again.';
+          showToast(msg, 'error');
+          setAuthModalNotice(msg);
+          setAuthModalMode('login');
+          setAuthModalOpen(true);
+        }
+      } else if (event === 'TOKEN_REFRESHED') {
+        void refreshUser({ silent: true }).catch(() => {});
+      } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+        void refreshUser({ silent: Boolean(userRef.current) }).catch(() => {});
       }
     });
 
     return () => {
+      unsubscribeSessionExpired();
       subscription.unsubscribe();
     };
   }, [refreshSettings, refreshUser, exitOwnerWebsiteView, showToast]);
@@ -534,7 +578,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         openAuthModal('login');
         return;
       }
+      if (pendingFavIdsRef.current.has(propertyId)) {
+        return;
+      }
 
+      pendingFavIdsRef.current.add(propertyId);
       const isFav = favoriteIds.includes(propertyId);
       if (isFav) {
         setFavoriteIds((prev) => prev.filter((id) => id !== propertyId));
@@ -542,23 +590,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           await removeUserFavorite(user.id, propertyId);
           showToast('Removed from saved properties', 'removed');
         } catch (err) {
-          setFavoriteIds((prev) => [...prev, propertyId]);
+          setFavoriteIds((prev) =>
+            prev.includes(propertyId) ? prev : [...prev, propertyId]
+          );
           showToast(
-            err instanceof Error ? err.message : 'Unable to update saved properties.',
+            toUserFriendlyNetworkError(err, 'Unable to update saved properties.').message,
             'error'
           );
+        } finally {
+          pendingFavIdsRef.current.delete(propertyId);
         }
       } else {
-        setFavoriteIds((prev) => [...prev, propertyId]);
+        setFavoriteIds((prev) =>
+          prev.includes(propertyId) ? prev : [...prev, propertyId]
+        );
         try {
           await addUserFavorite(user.id, propertyId);
           showToast('Saved to your properties', 'saved');
         } catch (err) {
           setFavoriteIds((prev) => prev.filter((id) => id !== propertyId));
           showToast(
-            err instanceof Error ? err.message : 'Unable to save property.',
+            toUserFriendlyNetworkError(err, 'Unable to save property.').message,
             'error'
           );
+        } finally {
+          pendingFavIdsRef.current.delete(propertyId);
         }
       }
     },
@@ -566,6 +622,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const logout = useCallback(async () => {
+    manualLogoutRef.current = true;
     try {
       await signOutUser();
       exitOwnerWebsiteView();
@@ -573,8 +630,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setFavoriteIds([]);
       showToast('Signed out', 'info');
     } catch (err) {
+      manualLogoutRef.current = false;
       showToast(
-        err instanceof Error ? err.message : 'Unable to sign out.',
+        toUserFriendlyNetworkError(err, 'Unable to sign out.').message,
         'error'
       );
     }

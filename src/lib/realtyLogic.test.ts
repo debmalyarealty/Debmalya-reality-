@@ -70,6 +70,24 @@ test('formatINRReadable formats readable Indian currency units for UI cards', ()
   assert.equal(formatINRReadable(28000, 'Rent', 'month'), '₹28,000 / month');
   assert.equal(formatINRReadable(6850000, 'Buy', 'total'), '₹68.5 Lakh');
   assert.equal(formatINRReadable(4400000, 'Buy'), '₹44 Lakh');
+  assert.equal(formatINR(null), 'Price on request');
+  assert.equal(formatINR(undefined), 'Price on request');
+  assert.equal(formatINR(0), 'Price on request');
+  assert.equal(formatINRReadable(null), 'Price on request');
+  assert.equal(formatINRReadable(0), 'Price on request');
+});
+
+test('filterAndSortProperties handles null/missing fields safely', () => {
+  const partial = {
+    ...makeProperty({ id: 'partial' }),
+    amenities: undefined as unknown as string[],
+    location: undefined as unknown as string,
+    title: undefined as unknown as string,
+    price_inr: undefined as unknown as number,
+  };
+  const result = filterAndSortProperties([partial], { query: 'anything' });
+  assert.equal(result.length, 0);
+  assert.equal(filterAndSortProperties(null as unknown as Property[], {}).length, 0);
 });
 
 test('formatReviewDate outputs editorial DD MMM YYYY format without timezone drift', () => {

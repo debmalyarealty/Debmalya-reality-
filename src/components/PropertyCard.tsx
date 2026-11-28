@@ -25,20 +25,26 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
   const { favoriteIds, toggleFavorite } = useApp();
   const navigate = useNavigate();
   const isFav = favoriteIds.includes(property.id);
-  const coverImage = property.images[0]?.url;
-  const detailPath = `/properties/${property.slug}`;
+  const safeImages = Array.isArray(property.images) ? property.images : [];
+  const coverImage = safeImages[0]?.url;
+  const safeSlug = property.slug || property.id;
+  const safeLocation = property.location || 'Siliguri';
+  const safeTitle = property.title || 'Siliguri Property';
+  const detailPath = `/properties/${safeSlug}`;
 
-  const locationDisplay = property.location.toLowerCase().includes('siliguri')
-    ? property.location
-    : `${property.location}, Siliguri`;
+  const locationDisplay = safeLocation.toLowerCase().includes('siliguri')
+    ? safeLocation
+    : `${safeLocation}, Siliguri`;
+
+  const beds = Number(property.bedrooms) || 0;
+  const baths = Number(property.bathrooms) || 0;
+  const areaSqFt = Number(property.area_sqft) || 0;
 
   const calmSummary = [
     locationDisplay,
-    property.bedrooms > 0 ? `${property.bedrooms} BHK` : null,
-    property.bathrooms > 0 ? `${property.bathrooms} Bath` : null,
-    property.area_sqft > 0
-      ? `${property.area_sqft.toLocaleString('en-IN')} sq ft`
-      : null,
+    beds > 0 ? `${beds} BHK` : null,
+    baths > 0 ? `${baths} Bath` : null,
+    areaSqFt > 0 ? `${areaSqFt.toLocaleString('en-IN')} sq ft` : null,
   ]
     .filter(Boolean)
     .join(' · ');

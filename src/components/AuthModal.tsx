@@ -108,11 +108,13 @@ export const AuthModal: React.FC = () => {
         'Verification email sent. Please check your inbox and spam folder.'
       );
     } catch (err) {
-      setError(
-        err instanceof Error
+      const normalized =
+        err instanceof Error && err.message.toLowerCase().includes('no internet')
           ? err.message
-          : 'Unable to resend verification email right now.'
-      );
+          : err instanceof Error
+          ? err.message
+          : 'Unable to resend verification email right now.';
+      setError(normalized);
       setErrorShakeKey((k) => k + 1);
     } finally {
       setResending(false);

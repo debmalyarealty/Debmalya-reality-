@@ -19,7 +19,18 @@ import { mapSignInAuthError } from './authCallback';
 import {
   extractStoragePathsFromUrls,
   formatFriendlyActionError,
+  isOwnerRole,
+  normalizeIdentifier,
 } from './adminHelpers';
+import {
+  assertOnline,
+  isBrowserOffline,
+  notifySessionExpired,
+  OFFLINE_ERROR_MESSAGE,
+  toUserFriendlyNetworkError,
+  TransientSessionError,
+  withRetryOnce,
+} from './networkUtils';
 import type {
   Agent,
   Booking,
@@ -152,11 +163,12 @@ function toDbPropertyStatus(
 }
 
 export function mapPropertyRow(row: Record<string, unknown>): Property {
-  const id = String(row.id);
-  const title = String(row.title || '');
-  const rawImages = Array.isArray(row.images) ? row.images : [];
-  const rawAmenities = Array.isArray(row.amenities) ? row.amenities : [];
-  const rawPriceUnit = row.price_unit ? String(row.price_unit) : '';
+  const safeRow = row || {};
+  const id = String(safeRow.id || '');
+  const title = String(safeRow.title || 'Siliguri Property');
+  const rawImages = Array.isArray(safeRow.images) ? safeRow.images : [];
+  const rawAmenities = Array.isArray(safeRow.amenities) ? safeRow.amenities : [];
+  const rawPriceUnit = safeRow.price_unit ? String(safeRow.price_unit) : '';
   const price_unit: PriceUnit | undefined =
     rawPriceUnit === 'night' || rawPriceUnit === 'month' || rawPriceUnit === 'total'
       ? (rawPriceUnit as PriceUnit)
@@ -164,29 +176,29 @@ export function mapPropertyRow(row: Record<string, unknown>): Property {
 
   return {
     id,
-    slug: String(row.slug || slugify(title) || id),
+    slug: String(safeRow.slug || slugify(title) || id),
     title,
-    description: String(row.description || ''),
-    price_inr: Number(row.price ?? row.price_inr ?? 0),
+    description: String(safeRow.description || ''),
+    price_inr: Number(safeRow.price ?? safeRow.price_inr ?? 0) || 0,
     price_unit,
-    listing_type: fromDbListingType(String(row.listing_type || 'buy')),
-    property_type: String(row.category || row.property_type || 'Flats / Apartments'),
-    location: String(row.location || 'Siliguri'),
-    address_detail: String(row.address_detail || ''),
-    latitude: row.latitude != null ? Number(row.latitude) : null,
-    longitude: row.longitude != null ? Number(row.longitude) : null,
-    bedrooms: Number(row.bedrooms || 0),
-    bathrooms: Number(row.bathrooms || 0),
-    area_sqft: Number(row.area_sqft || 0),
-    furnishing: (row.furnishing || 'Unfurnished') as FurnishingType,
-    parking: String(row.parking || ''),
-    status: fromDbPropertyStatus(String(row.status || 'available')),
-    is_published: row.is_published !== false,
-    is_featured: Boolean(row.is_featured),
+    listing_type: fromDbListingType(String(safeRow.listing_type || 'buy')),
+    property_type: String(safeRow.category || safeRow.property_type || 'Flats / Apartments'),
+    location: String(safeRow.location || 'Siliguri'),
+    address_detail: String(safeRow.address_detail || ''),
+    latitude: safeRow.latitude != null ? Number(safeRow.latitude) : null,
+    longitude: safeRow.longitude != null ? Number(safeRow.longitude) : null,
+    bedrooms: Number(safeRow.bedrooms || 0) || 0,
+    bathrooms: Number(safeRow.bathrooms || 0) || 0,
+    area_sqft: Number(safeRow.area_sqft || 0) || 0,
+    furnishing: (safeRow.furnishing || 'Unfurnished') as FurnishingType,
+    parking: String(safeRow.parking || ''),
+    status: fromDbPropertyStatus(String(safeRow.status || 'available')),
+    is_published: safeRow.is_published !== false,
+    is_featured: Boolean(safeRow.is_featured),
     is_recommended:
-      row.is_recommended != null
-        ? Boolean(row.is_recommended)
-        : Boolean(row.is_featured),
+      safeRow.is_recommended != null
+        ? Boolean(safeRow.is_recommended)
+        : Boolean(safeRow.is_featured),
     is_demo: false,
     amenities: rawAmenities.map((a) => String(a)).filter(Boolean),
     images: rawImages
@@ -199,92 +211,96 @@ export function mapPropertyRow(row: Record<string, unknown>): Property {
         caption: title,
         sort_order: idx,
       })),
-    created_at: String(row.created_at || new Date().toISOString()),
-    updated_at: String(row.updated_at || row.created_at || new Date().toISOString()),
+    created_at: String(safeRow.created_at || new Date().toISOString()),
+    updated_at: String(safeRow.updated_at || safeRow.created_at || new Date().toISOString()),
   };
 }
 
 function mapAgentRow(row: Record<string, unknown>): Agent {
+  const safeRow = row || {};
   return {
-    id: String(row.id),
-    name: String(row.name || ''),
-    position: String(row.designation || row.position || ''),
-    bio: String(row.intro || row.bio || ''),
-    phone: String(row.phone || ''),
-    whatsapp: String(row.whatsapp || ''),
-    photo_url: String(row.photo_url || ''),
-    is_active: row.is_visible !== false,
-    sort_order: Number(row.sort_order || 0),
-    created_at: String(row.created_at || new Date().toISOString()),
+    id: String(safeRow.id || ''),
+    name: String(safeRow.name || ''),
+    position: String(safeRow.designation || safeRow.position || ''),
+    bio: String(safeRow.intro || safeRow.bio || ''),
+    phone: String(safeRow.phone || ''),
+    whatsapp: String(safeRow.whatsapp || ''),
+    photo_url: String(safeRow.photo_url || ''),
+    is_active: safeRow.is_visible !== false,
+    sort_order: Number(safeRow.sort_order || 0) || 0,
+    created_at: String(safeRow.created_at || new Date().toISOString()),
   };
 }
 
 function mapReviewRow(row: Record<string, unknown>): Review {
-  const created = String(row.created_at || new Date().toISOString());
+  const safeRow = row || {};
+  const created = String(safeRow.created_at || new Date().toISOString());
   return {
-    id: String(row.id),
-    user_id: row.user_id ? String(row.user_id) : null,
-    reviewer_name: String(row.name || row.reviewer_name || ''),
-    reviewer_email: String(row.email || row.reviewer_email || ''),
-    customer_type: String(row.category || row.customer_type || 'Home Buyer'),
-    rating: Number(row.rating || 5),
-    review_text: String(row.text || row.review_text || ''),
-    status: (row.status || 'pending') as ReviewStatus,
-    is_featured: Boolean(row.is_featured),
+    id: String(safeRow.id || ''),
+    user_id: safeRow.user_id ? String(safeRow.user_id) : null,
+    reviewer_name: String(safeRow.name || safeRow.reviewer_name || 'Verified Client'),
+    reviewer_email: String(safeRow.email || safeRow.reviewer_email || ''),
+    customer_type: String(safeRow.category || safeRow.customer_type || 'Home Buyer'),
+    rating: Number(safeRow.rating || 5) || 5,
+    review_text: String(safeRow.text || safeRow.review_text || ''),
+    status: (safeRow.status || 'pending') as ReviewStatus,
+    is_featured: Boolean(safeRow.is_featured),
     review_date: created.slice(0, 10),
     created_at: created,
   };
 }
 
 function mapInquiryRow(row: Record<string, unknown>): Inquiry {
-  const id = String(row.id);
-  const status = (row.status || 'new') as InquiryStatus;
+  const safeRow = row || {};
+  const id = String(safeRow.id || '');
+  const status = (safeRow.status || 'new') as InquiryStatus;
   const localReadIds = readLocalReadInquirySet();
   const is_read =
-    typeof row.is_read === 'boolean'
-      ? row.is_read || localReadIds.has(id)
+    typeof safeRow.is_read === 'boolean'
+      ? safeRow.is_read || localReadIds.has(id)
       : status !== 'new' || localReadIds.has(id);
 
   return {
     id,
-    user_id: row.user_id ? String(row.user_id) : null,
-    property_id: row.property_id ? String(row.property_id) : null,
-    property_title: row.property_title ? String(row.property_title) : null,
-    name: String(row.name || ''),
-    phone: String(row.phone || ''),
-    email: String(row.email || ''),
-    interested_in: String(row.interest || row.interested_in || ''),
-    message: String(row.message || ''),
+    user_id: safeRow.user_id ? String(safeRow.user_id) : null,
+    property_id: safeRow.property_id ? String(safeRow.property_id) : null,
+    property_title: safeRow.property_title ? String(safeRow.property_title) : null,
+    name: String(safeRow.name || ''),
+    phone: String(safeRow.phone || ''),
+    email: String(safeRow.email || ''),
+    interested_in: String(safeRow.interest || safeRow.interested_in || ''),
+    message: String(safeRow.message || ''),
     status,
     is_read,
-    owner_notes: String(row.owner_notes || ''),
-    created_at: String(row.created_at || new Date().toISOString()),
-    updated_at: String(row.updated_at || row.created_at || new Date().toISOString()),
+    owner_notes: String(safeRow.owner_notes || ''),
+    created_at: String(safeRow.created_at || new Date().toISOString()),
+    updated_at: String(safeRow.updated_at || safeRow.created_at || new Date().toISOString()),
   };
 }
 
 function mapBookingRow(row: Record<string, unknown>): Booking {
-  const propObj = row.properties as Record<string, unknown> | null | undefined;
+  const safeRow = row || {};
+  const propObj = safeRow.properties as Record<string, unknown> | null | undefined;
   return {
-    id: String(row.id),
-    user_id: String(row.user_id || ''),
-    property_id: String(row.property_id || ''),
+    id: String(safeRow.id || ''),
+    user_id: String(safeRow.user_id || ''),
+    property_id: String(safeRow.property_id || ''),
     property_title: propObj?.title
       ? String(propObj.title)
-      : row.property_title
-      ? String(row.property_title)
+      : safeRow.property_title
+      ? String(safeRow.property_title)
       : 'Selected Siliguri Property',
     property_slug: propObj?.slug ? String(propObj.slug) : undefined,
-    customer_name: String(row.customer_name || ''),
-    phone: String(row.phone || ''),
-    email: String(row.email || ''),
-    preferred_date: String(row.preferred_date || ''),
-    preferred_time: String(row.preferred_time || '11:00 AM'),
-    note: String(row.note || ''),
-    owner_note: String(row.owner_note || ''),
-    status: (row.status || 'pending') as BookingStatus,
-    created_at: String(row.created_at || new Date().toISOString()),
-    updated_at: String(row.updated_at || row.created_at || new Date().toISOString()),
+    customer_name: String(safeRow.customer_name || ''),
+    phone: String(safeRow.phone || ''),
+    email: String(safeRow.email || ''),
+    preferred_date: String(safeRow.preferred_date || ''),
+    preferred_time: String(safeRow.preferred_time || '11:00 AM'),
+    note: String(safeRow.note || ''),
+    owner_note: String(safeRow.owner_note || ''),
+    status: (safeRow.status || 'pending') as BookingStatus,
+    created_at: String(safeRow.created_at || new Date().toISOString()),
+    updated_at: String(safeRow.updated_at || safeRow.created_at || new Date().toISOString()),
   };
 }
 
@@ -369,36 +385,69 @@ function mapSettingsRow(row: Record<string, unknown> | null): WebsiteSettings {
 
 export async function getCurrentSessionProfile(): Promise<UserProfile | null> {
   if (!isSupabaseConfigured || !supabase) return null;
+  if (isBrowserOffline()) {
+    throw new TransientSessionError(OFFLINE_ERROR_MESSAGE);
+  }
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  let session;
+  try {
+    const res = await supabase.auth.getSession();
+    if (res.error) {
+      throw new TransientSessionError(res.error.message);
+    }
+    session = res.data.session;
+  } catch (err) {
+    if (err instanceof TransientSessionError) throw err;
+    throw new TransientSessionError(
+      err instanceof Error ? err.message : 'Unable to check session'
+    );
+  }
+
   if (!session?.user) return null;
 
   const authUser = session.user;
-  let { data: profile, error } = await supabase
-    .from('profiles')
-    .select('id, email, full_name, phone, city, role, created_at')
-    .eq('id', authUser.id)
-    .maybeSingle();
+  const fetchProfileRow = async () => {
+    const res = await withTimeout(
+      supabase!
+        .from('profiles')
+        .select('id, email, full_name, phone, city, role, created_at')
+        .eq('id', authUser.id)
+        .maybeSingle(),
+      6500,
+      'User profile'
+    );
+    if (res.error && res.error.code !== 'PGRST116') {
+      throw res.error;
+    }
+    return res.data;
+  };
 
-  // Retry once shortly if auth signup trigger just fired
-  if (!profile && !error) {
-    await new Promise((r) => setTimeout(r, 350));
-    const retry = await supabase
-      .from('profiles')
-      .select('id, email, full_name, phone, city, role, created_at')
-      .eq('id', authUser.id)
-      .maybeSingle();
-    profile = retry.data;
-    error = retry.error;
+  let profile;
+  try {
+    profile = await withRetryOnce(fetchProfileRow);
+  } catch (err) {
+    throw new TransientSessionError(
+      err instanceof Error ? err.message : 'Could not verify profile right now'
+    );
   }
 
-  if (error || !profile) {
+  // Retry once shortly if auth signup trigger just fired
+  if (!profile) {
+    await new Promise((r) => setTimeout(r, 350));
+    try {
+      profile = await fetchProfileRow();
+    } catch (err) {
+      throw new TransientSessionError(
+        err instanceof Error ? err.message : 'Could not verify profile right now'
+      );
+    }
+  }
+
+  if (!profile) {
     return null;
   }
 
-  const role: UserRole = profile.role === 'owner' ? 'owner' : 'client';
+  const role: UserRole = isOwnerRole(profile.role) ? 'owner' : 'client';
   return {
     id: String(profile.id),
     email: String(profile.email || authUser.email || ''),
@@ -416,24 +465,29 @@ export async function signInWithEmail(
   email: string,
   password: string
 ): Promise<UserProfile> {
+  assertOnline();
   const client = requireClient();
-  const { data, error } = await client.auth.signInWithPassword({
-    email: email.trim().toLowerCase(),
-    password,
-  });
-  if (error) {
-    throw new Error(mapSignInAuthError(error.message));
+  try {
+    const { data, error } = await client.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    });
+    if (error) {
+      throw new Error(mapSignInAuthError(error.message));
+    }
+    if (!data.user) {
+      throw new Error('Incorrect email or password.');
+    }
+    const profile = await getCurrentSessionProfile();
+    if (!profile) {
+      throw new Error(
+        'Your account profile is missing or pending setup. Please contact support.'
+      );
+    }
+    return profile;
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Incorrect email or password.');
   }
-  if (!data.user) {
-    throw new Error('Incorrect email or password.');
-  }
-  const profile = await getCurrentSessionProfile();
-  if (!profile) {
-    throw new Error(
-      'Your account profile is missing or pending setup. Please contact support.'
-    );
-  }
-  return profile;
 }
 
 export async function signUpWithEmail(params: {
@@ -443,58 +497,73 @@ export async function signUpWithEmail(params: {
   phone?: string;
   city?: string;
 }): Promise<{ profile: UserProfile | null; needsEmailConfirmation: boolean }> {
+  assertOnline();
   const client = requireClient();
-  const { data, error } = await client.auth.signUp({
-    email: params.email.trim().toLowerCase(),
-    password: params.password,
-    options: {
-      emailRedirectTo:
-        typeof window !== 'undefined' ? window.location.origin : undefined,
-      data: {
-        full_name: params.full_name.trim(),
-        phone: (params.phone || '').trim(),
-        city: (params.city || 'Siliguri').trim() || 'Siliguri',
+  try {
+    const { data, error } = await client.auth.signUp({
+      email: params.email.trim().toLowerCase(),
+      password: params.password,
+      options: {
+        emailRedirectTo:
+          typeof window !== 'undefined' ? window.location.origin : undefined,
+        data: {
+          full_name: params.full_name.trim(),
+          phone: (params.phone || '').trim(),
+          city: (params.city || 'Siliguri').trim() || 'Siliguri',
+        },
       },
-    },
-  });
+    });
 
-  if (error) {
-    throw new Error(error.message);
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    // When Supabase email confirmation is enabled, session is null until verified
+    if (!data.session) {
+      return { profile: null, needsEmailConfirmation: true };
+    }
+
+    const profile = await getCurrentSessionProfile();
+    return { profile, needsEmailConfirmation: false };
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Unable to create account. Please try again.');
   }
-
-  // When Supabase email confirmation is enabled, session is null until verified
-  if (!data.session) {
-    return { profile: null, needsEmailConfirmation: true };
-  }
-
-  const profile = await getCurrentSessionProfile();
-  return { profile, needsEmailConfirmation: false };
 }
 
 export async function resendSignupVerificationEmail(email: string): Promise<void> {
+  assertOnline();
   const client = requireClient();
   const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail) {
     throw new Error('Please enter your email address.');
   }
-  const { error } = await client.auth.resend({
-    type: 'signup',
-    email: cleanEmail,
-    options: {
-      emailRedirectTo:
-        typeof window !== 'undefined' ? window.location.origin : undefined,
-    },
-  });
-  if (error) {
-    throw new Error(error.message);
+  try {
+    const { error } = await client.auth.resend({
+      type: 'signup',
+      email: cleanEmail,
+      options: {
+        emailRedirectTo:
+          typeof window !== 'undefined' ? window.location.origin : undefined,
+      },
+    });
+    if (error) {
+      throw new Error(error.message);
+    }
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Unable to resend verification email right now.');
   }
 }
 
 export async function exchangeAuthCodeForSession(code: string): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.auth.exchangeCodeForSession(code);
-  if (error) {
-    throw new Error(error.message);
+  try {
+    const { error } = await client.auth.exchangeCodeForSession(code);
+    if (error) {
+      throw new Error(error.message);
+    }
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Unable to complete verification.');
   }
 }
 
@@ -502,69 +571,97 @@ export async function verifyEmailOtpTokenHash(
   tokenHash: string,
   type: 'signup' | 'email' | 'recovery' | 'magiclink'
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.auth.verifyOtp({
-    token_hash: tokenHash,
-    type,
-  });
-  if (error) {
-    throw new Error(error.message);
+  try {
+    const { error } = await client.auth.verifyOtp({
+      token_hash: tokenHash,
+      type,
+    });
+    if (error) {
+      throw new Error(error.message);
+    }
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Unable to verify link.');
   }
 }
 
 export async function sendPasswordResetEmail(email: string): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.auth.resetPasswordForEmail(
-    email.trim().toLowerCase(),
-    {
-      redirectTo:
-        typeof window !== 'undefined'
-          ? `${window.location.origin}/?mode=recovery`
-          : undefined,
-    }
-  );
-  if (error) throw new Error(error.message);
+  try {
+    const { error } = await client.auth.resetPasswordForEmail(
+      email.trim().toLowerCase(),
+      {
+        redirectTo:
+          typeof window !== 'undefined'
+            ? `${window.location.origin}/?mode=recovery`
+            : undefined,
+      }
+    );
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not send reset email. Please try again.');
+  }
 }
 
 export async function updateOwnPassword(newPassword: string): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.auth.updateUser({ password: newPassword });
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not update password. Please try again.'
-      )
-    );
+  try {
+    const { error } = await client.auth.updateUser({ password: newPassword });
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not update password. Please try again.'
+        )
+      );
+    }
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not update password. Please try again.');
   }
 }
 
 export async function signOutUser(): Promise<void> {
   invalidateDashboardCaches();
   if (!isSupabaseConfigured || !supabase) return;
-  const { error } = await supabase.auth.signOut();
-  if (error) throw new Error(error.message);
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error && !isBrowserOffline()) {
+      throw new Error(error.message);
+    }
+  } catch (err) {
+    if (!isBrowserOffline()) {
+      throw toUserFriendlyNetworkError(err, 'Unable to sign out right now.');
+    }
+  }
 }
 
 export async function updateOwnProfile(
   userId: string,
   payload: { full_name: string; phone: string; city: string }
 ): Promise<UserProfile> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('profiles')
-    .update({
-      full_name: payload.full_name.trim(),
-      phone: payload.phone.trim(),
-      city: payload.city.trim() || 'Siliguri',
-    })
-    .eq('id', userId);
-  if (error) throw new Error(error.message);
+  try {
+    const { error } = await client
+      .from('profiles')
+      .update({
+        full_name: payload.full_name.trim(),
+        phone: payload.phone.trim(),
+        city: payload.city.trim() || 'Siliguri',
+      })
+      .eq('id', userId);
+    if (error) throw new Error(error.message);
 
-  invalidateDashboardCaches();
-  const refreshed = await getCurrentSessionProfile();
-  if (!refreshed) throw new Error('Unable to reload updated profile.');
-  return refreshed;
+    invalidateDashboardCaches();
+    const refreshed = await getCurrentSessionProfile();
+    if (!refreshed) throw new Error('Unable to reload updated profile.');
+    return refreshed;
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Unable to update profile. Please try again.');
+  }
 }
 
 // ============================================================================
@@ -617,15 +714,19 @@ export async function fetchSiteSettings(options?: {
   }
 
   try {
-    const { data, error } = await withTimeout(
-      supabase.from('site_settings').select('*').eq('id', 'default').maybeSingle(),
-      6000,
-      'Site settings'
-    );
-    if (error || !data) {
+    const mapped = await withRetryOnce(async () => {
+      const { data, error } = await withTimeout(
+        supabase!.from('site_settings').select('*').eq('id', 'default').maybeSingle(),
+        6000,
+        'Site settings'
+      );
+      if (error) throw error;
+      if (!data) return null;
+      return mapSettingsRow(data as Record<string, unknown>);
+    });
+    if (!mapped) {
       return cached?.value ?? DEFAULT_SITE_SETTINGS;
     }
-    const mapped = mapSettingsRow(data as Record<string, unknown>);
     writeCache(CACHE_KEYS.SITE_SETTINGS, mapped);
     return mapped;
   } catch {
@@ -653,21 +754,23 @@ export async function fetchPublicPropertiesWithMeta(options?: {
   }
 
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from('properties')
-        .select('*')
-        .eq('is_published', true)
-        .order('created_at', { ascending: false }),
-      6500,
-      'Public properties'
-    );
-    if (error) {
-      throw new Error(error.message);
-    }
-    const mapped = (data || []).map((r) =>
-      mapPropertyRow(r as Record<string, unknown>)
-    );
+    const mapped = await withRetryOnce(async () => {
+      const { data, error } = await withTimeout(
+        supabase!
+          .from('properties')
+          .select('*')
+          .eq('is_published', true)
+          .order('created_at', { ascending: false }),
+        6500,
+        'Public properties'
+      );
+      if (error) {
+        throw new Error(error.message);
+      }
+      return (data || []).map((r) =>
+        mapPropertyRow(r as Record<string, unknown>)
+      );
+    });
     writeCache(CACHE_KEYS.PUBLIC_PROPERTIES, mapped);
     return {
       properties: mapped,
@@ -725,51 +828,53 @@ export async function fetchPropertyBySlugOrId(
   }
 
   try {
-    const isUuid =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        slugOrId
+    return await withRetryOnce(async () => {
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          slugOrId
+        );
+      const query = supabase!.from('properties').select('*');
+      const { data, error } = await withTimeout(
+        isUuid
+          ? query.or(`slug.eq.${slugOrId},id.eq.${slugOrId}`).maybeSingle()
+          : query.eq('slug', slugOrId).maybeSingle(),
+        6500,
+        'Property detail'
       );
-    const query = supabase.from('properties').select('*');
-    const { data, error } = await withTimeout(
-      isUuid
-        ? query.or(`slug.eq.${slugOrId},id.eq.${slugOrId}`).maybeSingle()
-        : query.eq('slug', slugOrId).maybeSingle(),
-      6500,
-      'Property detail'
-    );
 
-    if (error) throw new Error(error.message);
-    if (!data) throw new Error('Property not found.');
+      if (error) throw new Error(error.message);
+      if (!data) throw new Error('Property not found.');
 
-    const property = mapPropertyRow(data as Record<string, unknown>);
+      const property = mapPropertyRow(data as Record<string, unknown>);
 
-    const { data: similarRows } = await withTimeout(
-      supabase
-        .from('properties')
-        .select('*')
-        .eq('is_published', true)
-        .neq('id', property.id)
-        .in('status', ['available', 'under construction'])
-        .order('created_at', { ascending: false })
-        .limit(6),
-      5000,
-      'Similar properties'
-    );
+      const { data: similarRows } = await withTimeout(
+        supabase!
+          .from('properties')
+          .select('*')
+          .eq('is_published', true)
+          .neq('id', property.id)
+          .in('status', ['available', 'under construction'])
+          .order('created_at', { ascending: false })
+          .limit(6),
+        5000,
+        'Similar properties'
+      );
 
-    const similar = (similarRows || [])
-      .map((r) => mapPropertyRow(r as Record<string, unknown>))
-      .sort((a, b) => {
-        const scoreA =
-          (a.location === property.location ? 2 : 0) +
-          (a.property_type === property.property_type ? 1 : 0);
-        const scoreB =
-          (b.location === property.location ? 2 : 0) +
-          (b.property_type === property.property_type ? 1 : 0);
-        return scoreB - scoreA;
-      })
-      .slice(0, 3);
+      const similar = (similarRows || [])
+        .map((r) => mapPropertyRow(r as Record<string, unknown>))
+        .sort((a, b) => {
+          const scoreA =
+            (a.location === property.location ? 2 : 0) +
+            (a.property_type === property.property_type ? 1 : 0);
+          const scoreB =
+            (b.location === property.location ? 2 : 0) +
+            (b.property_type === property.property_type ? 1 : 0);
+          return scoreB - scoreA;
+        })
+        .slice(0, 3);
 
-    return { property, similar, isFallback: false };
+      return { property, similar, isFallback: false };
+    });
   } catch (err) {
     const cachedPool = getCachedPublicProperties();
     if (cachedPool) {
@@ -778,7 +883,7 @@ export async function fetchPropertyBySlugOrId(
     }
     const demoHit = findFromPool(DEMO_PROPERTIES, true);
     if (demoHit) return demoHit;
-    throw err instanceof Error ? err : new Error('Property not found.');
+    throw toUserFriendlyNetworkError(err, 'Property not found.');
   }
 }
 
@@ -793,20 +898,22 @@ export async function fetchVisibleTeamMembers(options?: {
     return cached.value;
   }
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from('team_members')
-        .select('*')
-        .eq('is_visible', true)
-        .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: true }),
-      5500,
-      'Team members'
-    );
-    if (error) throw new Error(error.message);
-    const mapped = (data || []).map((r) =>
-      mapAgentRow(r as Record<string, unknown>)
-    );
+    const mapped = await withRetryOnce(async () => {
+      const { data, error } = await withTimeout(
+        supabase!
+          .from('team_members')
+          .select('*')
+          .eq('is_visible', true)
+          .order('sort_order', { ascending: true })
+          .order('created_at', { ascending: true }),
+        5500,
+        'Team members'
+      );
+      if (error) throw new Error(error.message);
+      return (data || []).map((r) =>
+        mapAgentRow(r as Record<string, unknown>)
+      );
+    });
     writeCache(CACHE_KEYS.VISIBLE_TEAM, mapped);
     return mapped;
   } catch {
@@ -825,20 +932,22 @@ export async function fetchApprovedReviews(options?: {
     return cached.value;
   }
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from('reviews')
-        .select('*')
-        .eq('status', 'approved')
-        .order('is_featured', { ascending: false })
-        .order('created_at', { ascending: false }),
-      5500,
-      'Approved reviews'
-    );
-    if (error) throw new Error(error.message);
-    const mapped = (data || []).map((r) =>
-      mapReviewRow(r as Record<string, unknown>)
-    );
+    const mapped = await withRetryOnce(async () => {
+      const { data, error } = await withTimeout(
+        supabase!
+          .from('reviews')
+          .select('*')
+          .eq('status', 'approved')
+          .order('is_featured', { ascending: false })
+          .order('created_at', { ascending: false }),
+        5500,
+        'Approved reviews'
+      );
+      if (error) throw new Error(error.message);
+      return (data || []).map((r) =>
+        mapReviewRow(r as Record<string, unknown>)
+      );
+    });
     writeCache(CACHE_KEYS.APPROVED_REVIEWS, mapped);
     return mapped;
   } catch {
@@ -860,6 +969,7 @@ export async function submitInquiry(params: {
   interest: string;
   message: string;
 }): Promise<void> {
+  assertOnline();
   const client = requireClient();
   const payload = {
     user_id: params.user_id || null,
@@ -873,13 +983,17 @@ export async function submitInquiry(params: {
     status: 'new',
     is_read: false,
   };
-  let { error } = await client.from('inquiries').insert(payload);
-  if (isMissingColumnError(error, 'is_read')) {
-    const { is_read: _omit, ...fallback } = payload;
-    ({ error } = await client.from('inquiries').insert(fallback));
+  try {
+    let { error } = await client.from('inquiries').insert(payload);
+    if (isMissingColumnError(error, 'is_read')) {
+      const { is_read: _omit, ...fallback } = payload;
+      ({ error } = await client.from('inquiries').insert(fallback));
+    }
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not submit inquiry. Please try again.');
   }
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
 }
 
 export async function submitBooking(params: {
@@ -892,20 +1006,25 @@ export async function submitBooking(params: {
   preferred_time: string;
   note: string;
 }): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.from('bookings').insert({
-    user_id: params.user_id,
-    property_id: params.property_id,
-    customer_name: params.customer_name.trim(),
-    phone: params.phone.trim(),
-    email: params.email.trim(),
-    preferred_date: params.preferred_date,
-    preferred_time: params.preferred_time,
-    note: params.note.trim(),
-    status: 'pending',
-  });
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client.from('bookings').insert({
+      user_id: params.user_id,
+      property_id: params.property_id,
+      customer_name: params.customer_name.trim(),
+      phone: params.phone.trim(),
+      email: params.email.trim(),
+      preferred_date: params.preferred_date,
+      preferred_time: params.preferred_time,
+      note: params.note.trim(),
+      status: 'pending',
+    });
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not schedule site visit. Please try again.');
+  }
 }
 
 export async function submitReview(params: {
@@ -916,57 +1035,79 @@ export async function submitReview(params: {
   rating: number;
   text: string;
 }): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.from('reviews').insert({
-    user_id: params.user_id,
-    name: params.name.trim(),
-    email: params.email.trim(),
-    category: params.category.trim(),
-    rating: params.rating,
-    text: params.text.trim(),
-    status: 'pending',
-  });
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client.from('reviews').insert({
+      user_id: params.user_id,
+      name: params.name.trim(),
+      email: params.email.trim(),
+      category: params.category.trim(),
+      rating: params.rating,
+      text: params.text.trim(),
+      status: 'pending',
+    });
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not submit review. Please try again.');
+  }
 }
 
 export async function fetchUserFavoriteIds(userId: string): Promise<string[]> {
-  if (!isSupabaseConfigured || !supabase) return [];
-  const { data, error } = await supabase
-    .from('favourites')
-    .select('property_id')
-    .eq('user_id', userId);
-  if (error) return [];
-  return (data || []).map((r) => String(r.property_id));
+  if (!isSupabaseConfigured || !supabase || isBrowserOffline()) return [];
+  try {
+    return await withRetryOnce(async () => {
+      const { data, error } = await withTimeout(
+        supabase!.from('favourites').select('property_id').eq('user_id', userId),
+        5500,
+        'Saved properties'
+      );
+      if (error) throw error;
+      return (data || []).map((r) => String(r.property_id));
+    });
+  } catch {
+    return [];
+  }
 }
 
 export async function addUserFavorite(
   userId: string,
   propertyId: string
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('favourites')
-    .upsert(
-      { user_id: userId, property_id: propertyId },
-      { onConflict: 'user_id,property_id' }
-    );
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client
+      .from('favourites')
+      .upsert(
+        { user_id: userId, property_id: propertyId },
+        { onConflict: 'user_id,property_id' }
+      );
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Unable to save property.');
+  }
 }
 
 export async function removeUserFavorite(
   userId: string,
   propertyId: string
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('favourites')
-    .delete()
-    .eq('user_id', userId)
-    .eq('property_id', propertyId);
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client
+      .from('favourites')
+      .delete()
+      .eq('user_id', userId)
+      .eq('property_id', propertyId);
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Unable to update saved properties.');
+  }
 }
 
 export async function fetchUserPreferences(
@@ -991,36 +1132,49 @@ export async function fetchUserPreferences(
     return cached.value;
   }
 
-  const { data } = await supabase
-    .from('customer_preferences')
-    .select('*')
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (!data) {
-    writeCache(cacheKey, defaults);
-    return defaults;
+  try {
+    const data = await withRetryOnce(async () => {
+      const res = await withTimeout(
+        supabase!
+          .from('customer_preferences')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        5500,
+        'Customer preferences'
+      );
+      if (res.error && res.error.code !== 'PGRST116') throw res.error;
+      return res.data;
+    });
+    if (!data) {
+      writeCache(cacheKey, defaults);
+      return defaults;
+    }
+    const mapped: CustomerPreferences = {
+      user_id: String(data.user_id),
+      preferred_location: String(data.preferred_location || 'All'),
+      property_type: String(data.property_type || 'All'),
+      listing_type: (data.listing_type || 'Buy') as 'Buy' | 'Rent' | 'Both',
+      min_budget: data.min_budget !== null ? Number(data.min_budget) : null,
+      max_budget: data.max_budget !== null ? Number(data.max_budget) : null,
+      min_bedrooms:
+        data.min_bedrooms !== null ? Number(data.min_bedrooms) : null,
+      notes: String(data.notes || ''),
+      notify_matches: data.notify_matches !== false,
+      updated_at: data.updated_at ? String(data.updated_at) : undefined,
+    };
+    writeCache(cacheKey, mapped);
+    return mapped;
+  } catch {
+    return cached?.value ?? defaults;
   }
-  const mapped: CustomerPreferences = {
-    user_id: String(data.user_id),
-    preferred_location: String(data.preferred_location || 'All'),
-    property_type: String(data.property_type || 'All'),
-    listing_type: (data.listing_type || 'Buy') as 'Buy' | 'Rent' | 'Both',
-    min_budget: data.min_budget !== null ? Number(data.min_budget) : null,
-    max_budget: data.max_budget !== null ? Number(data.max_budget) : null,
-    min_bedrooms:
-      data.min_bedrooms !== null ? Number(data.min_bedrooms) : null,
-    notes: String(data.notes || ''),
-    notify_matches: data.notify_matches !== false,
-    updated_at: data.updated_at ? String(data.updated_at) : undefined,
-  };
-  writeCache(cacheKey, mapped);
-  return mapped;
 }
 
 export async function saveUserPreferences(
   userId: string,
   prefs: CustomerPreferences
 ): Promise<CustomerPreferences> {
+  assertOnline();
   const client = requireClient();
   const payload = {
     user_id: userId,
@@ -1034,107 +1188,121 @@ export async function saveUserPreferences(
     notify_matches: prefs.notify_matches,
     updated_at: new Date().toISOString(),
   };
-  const { error } = await client
-    .from('customer_preferences')
-    .upsert(payload, { onConflict: 'user_id' });
-  if (error) throw new Error(error.message);
-  writeCache(userPreferencesCacheKey(userId), payload);
-  invalidateDashboardCaches();
-  return payload;
+  try {
+    const { error } = await client
+      .from('customer_preferences')
+      .upsert(payload, { onConflict: 'user_id' });
+    if (error) throw new Error(error.message);
+    writeCache(userPreferencesCacheKey(userId), payload);
+    invalidateDashboardCaches();
+    return payload;
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not save preferences. Please try again.');
+  }
 }
 
 export async function saveUserSearch(
   userId: string,
   payload: Omit<SavedSearch, 'id' | 'user_id' | 'created_at'>
 ): Promise<SavedSearch> {
+  assertOnline();
   const client = requireClient();
-  // Deduplicate identical criteria for this user cleanly
-  const { data: existingRows } = await client
-    .from('saved_searches')
-    .select('*')
-    .eq('user_id', userId);
+  try {
+    // Deduplicate identical criteria for this user cleanly
+    const { data: existingRows } = await client
+      .from('saved_searches')
+      .select('*')
+      .eq('user_id', userId);
 
-  const match = (existingRows || []).find(
-    (r) =>
-      String(r.query || '') === (payload.query || '') &&
-      String(r.listing_type || 'All') === (payload.listing_type || 'All') &&
-      String(r.property_type || 'All') === (payload.property_type || 'All') &&
-      String(r.location || 'All') === (payload.location || 'All') &&
-      (r.min_price ?? null) === (payload.min_price ?? null) &&
-      (r.max_price ?? null) === (payload.max_price ?? null) &&
-      (r.min_bedrooms ?? null) === (payload.min_bedrooms ?? null) &&
-      String(r.furnishing || 'All') === (payload.furnishing || 'All') &&
-      String(r.sort_by || 'newest') === (payload.sort_by || 'newest')
-  );
+    const match = (existingRows || []).find(
+      (r) =>
+        String(r.query || '') === (payload.query || '') &&
+        String(r.listing_type || 'All') === (payload.listing_type || 'All') &&
+        String(r.property_type || 'All') === (payload.property_type || 'All') &&
+        String(r.location || 'All') === (payload.location || 'All') &&
+        (r.min_price ?? null) === (payload.min_price ?? null) &&
+        (r.max_price ?? null) === (payload.max_price ?? null) &&
+        (r.min_bedrooms ?? null) === (payload.min_bedrooms ?? null) &&
+        String(r.furnishing || 'All') === (payload.furnishing || 'All') &&
+        String(r.sort_by || 'newest') === (payload.sort_by || 'newest')
+    );
 
-  if (match) {
+    if (match) {
+      return {
+        id: String(match.id),
+        user_id: userId,
+        name: String(match.name),
+        query: String(match.query || ''),
+        listing_type: (match.listing_type || 'All') as SavedSearch['listing_type'],
+        property_type: String(match.property_type || 'All'),
+        location: String(match.location || 'All'),
+        min_price: match.min_price !== null ? Number(match.min_price) : null,
+        max_price: match.max_price !== null ? Number(match.max_price) : null,
+        min_bedrooms:
+          match.min_bedrooms !== null ? Number(match.min_bedrooms) : null,
+        furnishing: String(match.furnishing || 'All'),
+        sort_by: (match.sort_by || 'newest') as SavedSearch['sort_by'],
+        created_at: String(match.created_at),
+      };
+    }
+
+    const { data, error } = await client
+      .from('saved_searches')
+      .insert({
+        user_id: userId,
+        name: payload.name,
+        query: payload.query || '',
+        listing_type: payload.listing_type || 'All',
+        property_type: payload.property_type || 'All',
+        location: payload.location || 'All',
+        min_price: payload.min_price,
+        max_price: payload.max_price,
+        min_bedrooms: payload.min_bedrooms,
+        furnishing: payload.furnishing || 'All',
+        sort_by: payload.sort_by || 'newest',
+      })
+      .select()
+      .single();
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+
     return {
-      id: String(match.id),
+      id: String(data.id),
       user_id: userId,
-      name: String(match.name),
-      query: String(match.query || ''),
-      listing_type: (match.listing_type || 'All') as SavedSearch['listing_type'],
-      property_type: String(match.property_type || 'All'),
-      location: String(match.location || 'All'),
-      min_price: match.min_price !== null ? Number(match.min_price) : null,
-      max_price: match.max_price !== null ? Number(match.max_price) : null,
-      min_bedrooms:
-        match.min_bedrooms !== null ? Number(match.min_bedrooms) : null,
-      furnishing: String(match.furnishing || 'All'),
-      sort_by: (match.sort_by || 'newest') as SavedSearch['sort_by'],
-      created_at: String(match.created_at),
+      name: String(data.name),
+      query: String(data.query || ''),
+      listing_type: (data.listing_type || 'All') as SavedSearch['listing_type'],
+      property_type: String(data.property_type || 'All'),
+      location: String(data.location || 'All'),
+      min_price: data.min_price !== null ? Number(data.min_price) : null,
+      max_price: data.max_price !== null ? Number(data.max_price) : null,
+      min_bedrooms: data.min_bedrooms !== null ? Number(data.min_bedrooms) : null,
+      furnishing: String(data.furnishing || 'All'),
+      sort_by: (data.sort_by || 'newest') as SavedSearch['sort_by'],
+      created_at: String(data.created_at),
     };
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not save search. Please try again.');
   }
-
-  const { data, error } = await client
-    .from('saved_searches')
-    .insert({
-      user_id: userId,
-      name: payload.name,
-      query: payload.query || '',
-      listing_type: payload.listing_type || 'All',
-      property_type: payload.property_type || 'All',
-      location: payload.location || 'All',
-      min_price: payload.min_price,
-      max_price: payload.max_price,
-      min_bedrooms: payload.min_bedrooms,
-      furnishing: payload.furnishing || 'All',
-      sort_by: payload.sort_by || 'newest',
-    })
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
-
-  return {
-    id: String(data.id),
-    user_id: userId,
-    name: String(data.name),
-    query: String(data.query || ''),
-    listing_type: (data.listing_type || 'All') as SavedSearch['listing_type'],
-    property_type: String(data.property_type || 'All'),
-    location: String(data.location || 'All'),
-    min_price: data.min_price !== null ? Number(data.min_price) : null,
-    max_price: data.max_price !== null ? Number(data.max_price) : null,
-    min_bedrooms: data.min_bedrooms !== null ? Number(data.min_bedrooms) : null,
-    furnishing: String(data.furnishing || 'All'),
-    sort_by: (data.sort_by || 'newest') as SavedSearch['sort_by'],
-    created_at: String(data.created_at),
-  };
 }
 
 export async function removeSavedSearchById(
   userId: string,
   id: string
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('saved_searches')
-    .delete()
-    .eq('id', id)
-    .eq('user_id', userId);
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client
+      .from('saved_searches')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not remove saved search. Please try again.');
+  }
 }
 
 export interface ClientDashboardData {
@@ -1170,79 +1338,90 @@ export async function fetchClientDashboardData(
     return cached.value;
   }
 
+  assertOnline();
   const client = requireClient();
 
-  const [favRes, searchRes, bookRes, inqRes, revRes, prefRes] = await Promise.all([
-    client
-      .from('favourites')
-      .select('property_id, properties(*)')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
-    client
-      .from('saved_searches')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
-    client
-      .from('bookings')
-      .select('*, properties(title, slug)')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
-    client
-      .from('inquiries')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
-    client
-      .from('reviews')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
-    fetchUserPreferences(userId, { force: options?.force }),
-  ]);
+  try {
+    const payload = await withRetryOnce(async () => {
+      const [favRes, searchRes, bookRes, inqRes, revRes, prefRes] = await withTimeout(
+        Promise.all([
+          client
+            .from('favourites')
+            .select('property_id, properties(*)')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false }),
+          client
+            .from('saved_searches')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false }),
+          client
+            .from('bookings')
+            .select('*, properties(title, slug)')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false }),
+          client
+            .from('inquiries')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false }),
+          client
+            .from('reviews')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false }),
+          fetchUserPreferences(userId, { force: options?.force }),
+        ]),
+        8000,
+        'Client dashboard'
+      );
 
-  if (favRes.error) throw new Error(favRes.error.message);
-  if (bookRes.error) throw new Error(bookRes.error.message);
-  if (inqRes.error) throw new Error(inqRes.error.message);
-  if (revRes.error) throw new Error(revRes.error.message);
+      if (favRes.error) throw new Error(favRes.error.message);
+      if (bookRes.error) throw new Error(bookRes.error.message);
+      if (inqRes.error) throw new Error(inqRes.error.message);
+      if (revRes.error) throw new Error(revRes.error.message);
 
-  const favorites = (favRes.data || [])
-    .map((row) => row.properties as unknown as Record<string, unknown> | null)
-    .filter((p): p is Record<string, unknown> => Boolean(p))
-    .map(mapPropertyRow);
+      const favorites = (favRes.data || [])
+        .map((row) => row.properties as unknown as Record<string, unknown> | null)
+        .filter((p): p is Record<string, unknown> => Boolean(p))
+        .map(mapPropertyRow);
 
-  const savedSearches: SavedSearch[] = (searchRes.data || []).map((s) => ({
-    id: String(s.id),
-    user_id: String(s.user_id),
-    name: String(s.name),
-    query: String(s.query || ''),
-    listing_type: (s.listing_type || 'All') as SavedSearch['listing_type'],
-    property_type: String(s.property_type || 'All'),
-    location: String(s.location || 'All'),
-    min_price: s.min_price !== null ? Number(s.min_price) : null,
-    max_price: s.max_price !== null ? Number(s.max_price) : null,
-    min_bedrooms: s.min_bedrooms !== null ? Number(s.min_bedrooms) : null,
-    furnishing: String(s.furnishing || 'All'),
-    sort_by: (s.sort_by || 'newest') as SavedSearch['sort_by'],
-    created_at: String(s.created_at),
-  }));
+      const savedSearches: SavedSearch[] = (searchRes.data || []).map((s) => ({
+        id: String(s.id),
+        user_id: String(s.user_id),
+        name: String(s.name || 'Saved Search'),
+        query: String(s.query || ''),
+        listing_type: (s.listing_type || 'All') as SavedSearch['listing_type'],
+        property_type: String(s.property_type || 'All'),
+        location: String(s.location || 'All'),
+        min_price: s.min_price !== null ? Number(s.min_price) : null,
+        max_price: s.max_price !== null ? Number(s.max_price) : null,
+        min_bedrooms: s.min_bedrooms !== null ? Number(s.min_bedrooms) : null,
+        furnishing: String(s.furnishing || 'All'),
+        sort_by: (s.sort_by || 'newest') as SavedSearch['sort_by'],
+        created_at: String(s.created_at),
+      }));
 
-  const payload: ClientDashboardData = {
-    favorites,
-    savedSearches,
-    bookings: (bookRes.data || []).map((r) =>
-      mapBookingRow(r as Record<string, unknown>)
-    ),
-    inquiries: (inqRes.data || []).map((r) =>
-      mapInquiryRow(r as Record<string, unknown>)
-    ),
-    reviews: (revRes.data || []).map((r) =>
-      mapReviewRow(r as Record<string, unknown>)
-    ),
-    preferences: prefRes,
-  };
-  writeCache(cacheKey, payload);
-  return payload;
+      return {
+        favorites,
+        savedSearches,
+        bookings: (bookRes.data || []).map((r) =>
+          mapBookingRow(r as Record<string, unknown>)
+        ),
+        inquiries: (inqRes.data || []).map((r) =>
+          mapInquiryRow(r as Record<string, unknown>)
+        ),
+        reviews: (revRes.data || []).map((r) =>
+          mapReviewRow(r as Record<string, unknown>)
+        ),
+        preferences: prefRes,
+      } satisfies ClientDashboardData;
+    });
+    writeCache(cacheKey, payload);
+    return payload;
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not load your account data. Please try again.');
+  }
 }
 
 // ============================================================================
@@ -1253,6 +1432,7 @@ export async function uploadStorageImage(
   bucket: 'property-images' | 'team-photos',
   file: File
 ): Promise<string> {
+  assertOnline();
   const client = requireClient();
   const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
   if (!allowedTypes.includes(file.type)) {
@@ -1270,22 +1450,29 @@ export async function uploadStorageImage(
       : 'jpg';
   const filePath = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
 
-  const { error } = await client.storage.from(bucket).upload(filePath, file, {
-    cacheControl: '31536000',
-    upsert: false,
-    contentType: file.type,
-  });
+  try {
+    const { error } = await client.storage.from(bucket).upload(filePath, file, {
+      cacheControl: '31536000',
+      upsert: false,
+      contentType: file.type,
+    });
 
-  if (error) {
-    const detail = error.message ? ` (${error.message})` : '';
-    throw new Error(`Could not upload photo to ${bucket}${detail}. Please try again.`);
-  }
+    if (error) {
+      const detail = error.message ? ` (${error.message})` : '';
+      throw new Error(`Could not upload photo to ${bucket}${detail}. Please try again.`);
+    }
 
-  const { data } = client.storage.from(bucket).getPublicUrl(filePath);
-  if (!data?.publicUrl) {
-    throw new Error('Photo uploaded but its public URL could not be resolved.');
+    const { data } = client.storage.from(bucket).getPublicUrl(filePath);
+    if (!data?.publicUrl) {
+      throw new Error('Photo uploaded but its public URL could not be resolved.');
+    }
+    return data.publicUrl;
+  } catch (err) {
+    throw toUserFriendlyNetworkError(
+      err,
+      `Could not upload photo to ${bucket}. Please try again.`
+    );
   }
-  return data.publicUrl;
 }
 
 export interface OwnerDashboardData {
@@ -1327,129 +1514,140 @@ export async function fetchOwnerDashboardData(
     }
   }
 
+  assertOnline();
   const client = requireClient();
 
-  const [propRes, inqRes, bookRes, revRes, teamRes, setRes, profRes, favRes] =
-    await Promise.all([
-      client
-        .from('properties')
-        .select('*')
-        .order('created_at', { ascending: false }),
-      client
-        .from('inquiries')
-        .select('*')
-        .order('created_at', { ascending: false }),
-      client
-        .from('bookings')
-        .select('*, properties(title, slug)')
-        .order('created_at', { ascending: false }),
-      client
-        .from('reviews')
-        .select('*')
-        .order('created_at', { ascending: false }),
-      client
-        .from('team_members')
-        .select('*')
-        .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: true }),
-      client.from('site_settings').select('*').eq('id', 'default').maybeSingle(),
-      client
-        .from('profiles')
-        .select('id, email, full_name, phone, city, role, created_at')
-        .order('created_at', { ascending: false }),
-      client.from('favourites').select('user_id, property_id'),
-    ]);
+  try {
+    const payload = await withRetryOnce(async () => {
+      const [propRes, inqRes, bookRes, revRes, teamRes, setRes, profRes, favRes] =
+        await withTimeout(
+          Promise.all([
+            client
+              .from('properties')
+              .select('*')
+              .order('created_at', { ascending: false }),
+            client
+              .from('inquiries')
+              .select('*')
+              .order('created_at', { ascending: false }),
+            client
+              .from('bookings')
+              .select('*, properties(title, slug)')
+              .order('created_at', { ascending: false }),
+            client
+              .from('reviews')
+              .select('*')
+              .order('created_at', { ascending: false }),
+            client
+              .from('team_members')
+              .select('*')
+              .order('sort_order', { ascending: true })
+              .order('created_at', { ascending: true }),
+            client.from('site_settings').select('*').eq('id', 'default').maybeSingle(),
+            client
+              .from('profiles')
+              .select('id, email, full_name, phone, city, role, created_at')
+              .order('created_at', { ascending: false }),
+            client.from('favourites').select('user_id, property_id'),
+          ]),
+          9000,
+          'Owner dashboard'
+        );
 
-  if (propRes.error) throw new Error(propRes.error.message);
-  if (inqRes.error) throw new Error(inqRes.error.message);
-  if (bookRes.error) throw new Error(bookRes.error.message);
-  if (revRes.error) throw new Error(revRes.error.message);
-  if (teamRes.error) throw new Error(teamRes.error.message);
-  if (setRes.error) throw new Error(setRes.error.message);
-  if (profRes.error) throw new Error(profRes.error.message);
+      if (propRes.error) throw new Error(propRes.error.message);
+      if (inqRes.error) throw new Error(inqRes.error.message);
+      if (bookRes.error) throw new Error(bookRes.error.message);
+      if (revRes.error) throw new Error(revRes.error.message);
+      if (teamRes.error) throw new Error(teamRes.error.message);
+      if (setRes.error) throw new Error(setRes.error.message);
+      if (profRes.error) throw new Error(profRes.error.message);
 
-  const favoriteCounts: Record<string, number> = {};
-  const savedByClientId: Record<string, string[]> = {};
-  if (!favRes.error && Array.isArray(favRes.data)) {
-    for (const row of favRes.data) {
-      const pid = row.property_id ? String(row.property_id) : '';
-      const uid = row.user_id ? String(row.user_id) : '';
-      if (pid) {
-        favoriteCounts[pid] = (favoriteCounts[pid] || 0) + 1;
-      }
-      if (uid && pid) {
-        if (!savedByClientId[uid]) savedByClientId[uid] = [];
-        if (!savedByClientId[uid].includes(pid)) {
-          savedByClientId[uid].push(pid);
+      const favoriteCounts: Record<string, number> = {};
+      const savedByClientId: Record<string, string[]> = {};
+      if (!favRes.error && Array.isArray(favRes.data)) {
+        for (const row of favRes.data) {
+          const pid = row.property_id ? String(row.property_id) : '';
+          const uid = row.user_id ? String(row.user_id) : '';
+          if (pid) {
+            favoriteCounts[pid] = (favoriteCounts[pid] || 0) + 1;
+          }
+          if (uid && pid) {
+            if (!savedByClientId[uid]) savedByClientId[uid] = [];
+            if (!savedByClientId[uid].includes(pid)) {
+              savedByClientId[uid].push(pid);
+            }
+          }
         }
       }
+
+      const properties = (propRes.data || []).map((r) =>
+        mapPropertyRow(r as Record<string, unknown>)
+      );
+      const inquiries = (inqRes.data || []).map((r) =>
+        mapInquiryRow(r as Record<string, unknown>)
+      );
+      const bookings = (bookRes.data || []).map((r) =>
+        mapBookingRow(r as Record<string, unknown>)
+      );
+      const reviews = (revRes.data || []).map((r) =>
+        mapReviewRow(r as Record<string, unknown>)
+      );
+      const agents = (teamRes.data || []).map((r) =>
+        mapAgentRow(r as Record<string, unknown>)
+      );
+      const settings = mapSettingsRow(
+        (setRes.data as Record<string, unknown> | null) || null
+      );
+      const clients: UserProfile[] = (profRes.data || [])
+        .filter((p) => !isOwnerRole(p.role))
+        .map((p) => ({
+          id: String(p.id),
+          email: String(p.email || ''),
+          full_name: String(p.full_name || ''),
+          phone: String(p.phone || ''),
+          city: String(p.city || 'Siliguri'),
+          role: 'client',
+          created_at: String(p.created_at),
+        }));
+
+      const stats: OwnerDashboardStats = {
+        total_properties: properties.length,
+        available_properties: properties.filter((p) => p.status === 'Available')
+          .length,
+        under_construction_properties: properties.filter(
+          (p) => p.status === 'Under Construction'
+        ).length,
+        sold_properties: properties.filter((p) => p.status === 'Sold').length,
+        rented_properties: properties.filter((p) => p.status === 'Rented').length,
+        new_inquiries: inquiries.filter((i) => !i.is_read).length,
+        total_inquiries: inquiries.length,
+        pending_bookings: bookings.filter((b) => b.status === 'pending').length,
+        total_bookings: bookings.length,
+        pending_reviews: reviews.filter((r) => r.status === 'pending').length,
+        total_reviews: reviews.length,
+        client_accounts: clients.length,
+      };
+
+      return {
+        stats,
+        properties,
+        favoriteCounts,
+        savedByClientId,
+        inquiries,
+        bookings,
+        reviews,
+        agents,
+        settings,
+        clients,
+      } satisfies OwnerDashboardData;
+    });
+    if (userId) {
+      writeCache(ownerDashboardCacheKey(userId), payload);
     }
+    return payload;
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not load dashboard data. Please try again.');
   }
-
-  const properties = (propRes.data || []).map((r) =>
-    mapPropertyRow(r as Record<string, unknown>)
-  );
-  const inquiries = (inqRes.data || []).map((r) =>
-    mapInquiryRow(r as Record<string, unknown>)
-  );
-  const bookings = (bookRes.data || []).map((r) =>
-    mapBookingRow(r as Record<string, unknown>)
-  );
-  const reviews = (revRes.data || []).map((r) =>
-    mapReviewRow(r as Record<string, unknown>)
-  );
-  const agents = (teamRes.data || []).map((r) =>
-    mapAgentRow(r as Record<string, unknown>)
-  );
-  const settings = mapSettingsRow(
-    (setRes.data as Record<string, unknown> | null) || null
-  );
-  const clients: UserProfile[] = (profRes.data || [])
-    .filter((p) => p.role !== 'owner')
-    .map((p) => ({
-      id: String(p.id),
-      email: String(p.email || ''),
-      full_name: String(p.full_name || ''),
-      phone: String(p.phone || ''),
-      city: String(p.city || 'Siliguri'),
-      role: 'client',
-      created_at: String(p.created_at),
-    }));
-
-  const stats: OwnerDashboardStats = {
-    total_properties: properties.length,
-    available_properties: properties.filter((p) => p.status === 'Available')
-      .length,
-    under_construction_properties: properties.filter(
-      (p) => p.status === 'Under Construction'
-    ).length,
-    sold_properties: properties.filter((p) => p.status === 'Sold').length,
-    rented_properties: properties.filter((p) => p.status === 'Rented').length,
-    new_inquiries: inquiries.filter((i) => !i.is_read).length,
-    total_inquiries: inquiries.length,
-    pending_bookings: bookings.filter((b) => b.status === 'pending').length,
-    total_bookings: bookings.length,
-    pending_reviews: reviews.filter((r) => r.status === 'pending').length,
-    total_reviews: reviews.length,
-    client_accounts: clients.length,
-  };
-
-  const payload: OwnerDashboardData = {
-    stats,
-    properties,
-    favoriteCounts,
-    savedByClientId,
-    inquiries,
-    bookings,
-    reviews,
-    agents,
-    settings,
-    clients,
-  };
-  if (userId) {
-    writeCache(ownerDashboardCacheKey(userId), payload);
-  }
-  return payload;
 }
 
 export async function ownerSaveProperty(
@@ -1478,6 +1676,7 @@ export async function ownerSaveProperty(
     images: string[];
   }
 ): Promise<{ id: string; slug: string }> {
+  assertOnline();
   const client = requireClient();
   const baseSlug = slugify(input.title) || 'siliguri-property';
   const dbPayload: Record<string, unknown> = {
@@ -1537,56 +1736,70 @@ export async function ownerSaveProperty(
       .single();
   };
 
-  let activePayload = { ...dbPayload };
-  let { data, error } = await executeWrite(activePayload);
+  try {
+    let activePayload = { ...dbPayload };
+    let { data, error } = await executeWrite(activePayload);
 
-  // Strip optional unmigrated columns only if Postgres schema lacks them
-  for (const optionalCol of ['is_recommended', 'price_unit']) {
-    if (error && isMissingColumnError(error, optionalCol)) {
-      const nextPayload = { ...activePayload };
-      delete nextPayload[optionalCol];
-      activePayload = nextPayload;
-      ({ data, error } = await executeWrite(activePayload));
+    // Strip optional unmigrated columns only if Postgres schema lacks them
+    for (const optionalCol of ['is_recommended', 'price_unit']) {
+      if (error && isMissingColumnError(error, optionalCol)) {
+        const nextPayload = { ...activePayload };
+        delete nextPayload[optionalCol];
+        activePayload = nextPayload;
+        ({ data, error } = await executeWrite(activePayload));
+      }
     }
-  }
 
-  if (error) throw new Error(error.message);
-  savedId = data?.id ? String(data.id) : savedId;
-  savedSlug = data?.slug ? String(data.slug) : savedSlug;
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
-  return { id: savedId, slug: savedSlug };
+    if (error) throw new Error(error.message);
+    savedId = data?.id ? String(data.id) : savedId;
+    savedSlug = data?.slug ? String(data.slug) : savedSlug;
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+    return { id: savedId, slug: savedSlug };
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not save property. Please try again.');
+  }
 }
 
 export async function ownerTogglePropertyPublished(
   id: string,
   isPublished: boolean
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('properties')
-    .update({ is_published: isPublished })
-    .eq('id', id);
-  if (error) throw new Error(error.message);
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client
+      .from('properties')
+      .update({ is_published: isPublished })
+      .eq('id', id);
+    if (error) throw new Error(error.message);
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not update listing visibility.');
+  }
 }
 
 async function removeStorageUrlsFromBucket(
   bucket: 'property-images' | 'team-photos',
   urls: readonly string[]
 ): Promise<void> {
+  assertOnline();
   const paths = extractStoragePathsFromUrls(urls, bucket);
   if (paths.length === 0) return;
   const client = requireClient();
-  const { error } = await client.storage.from(bucket).remove(paths);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete property photos. Please try again.'
-      )
-    );
+  try {
+    const { error } = await client.storage.from(bucket).remove(paths);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete property photos. Please try again.'
+        )
+      );
+    }
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete property photos. Please try again.');
   }
 }
 
@@ -1594,125 +1807,160 @@ export async function ownerDeleteProperty(
   id: string,
   imageUrls: readonly string[] = []
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  if (imageUrls.length > 0) {
-    await removeStorageUrlsFromBucket('property-images', imageUrls);
+  try {
+    if (imageUrls.length > 0) {
+      await removeStorageUrlsFromBucket('property-images', imageUrls);
+    }
+    const { error } = await client.from('properties').delete().eq('id', id);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete property. Please try again.'
+        )
+      );
+    }
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete property. Please try again.');
   }
-  const { error } = await client.from('properties').delete().eq('id', id);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete property. Please try again.'
-      )
-    );
-  }
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
 }
 
 export async function ownerDeletePropertiesBulk(
   items: ReadonlyArray<{ id: string; imageUrls: readonly string[] }>
 ): Promise<void> {
   if (items.length === 0) return;
+  assertOnline();
   const client = requireClient();
-  const allUrls = items.flatMap((item) => item.imageUrls);
-  if (allUrls.length > 0) {
-    await removeStorageUrlsFromBucket('property-images', allUrls);
+  try {
+    const allUrls = items.flatMap((item) => item.imageUrls || []);
+    if (allUrls.length > 0) {
+      await removeStorageUrlsFromBucket('property-images', allUrls);
+    }
+    const ids = items.map((item) => item.id);
+    const { error } = await client.from('properties').delete().in('id', ids);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete selected properties. Please try again.'
+        )
+      );
+    }
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete selected properties. Please try again.');
   }
-  const ids = items.map((item) => item.id);
-  const { error } = await client.from('properties').delete().in('id', ids);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete selected properties. Please try again.'
-      )
-    );
-  }
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
 }
 
 export async function ownerDeleteInquiry(id: string): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.from('inquiries').delete().eq('id', id);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete enquiry. Please try again.'
-      )
-    );
+  try {
+    const { error } = await client.from('inquiries').delete().eq('id', id);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete enquiry. Please try again.'
+        )
+      );
+    }
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete enquiry. Please try again.');
   }
-  invalidateDashboardCaches();
 }
 
 export async function ownerDeleteInquiriesBulk(
   ids: readonly string[]
 ): Promise<void> {
   if (ids.length === 0) return;
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('inquiries')
-    .delete()
-    .in('id', [...ids]);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete selected enquiries. Please try again.'
-      )
-    );
+  try {
+    const { error } = await client
+      .from('inquiries')
+      .delete()
+      .in('id', [...ids]);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete selected enquiries. Please try again.'
+        )
+      );
+    }
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete selected enquiries. Please try again.');
   }
-  invalidateDashboardCaches();
 }
 
 export async function ownerDeleteBooking(id: string): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.from('bookings').delete().eq('id', id);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete visit request. Please try again.'
-      )
-    );
+  try {
+    const { error } = await client.from('bookings').delete().eq('id', id);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete visit request. Please try again.'
+        )
+      );
+    }
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete visit request. Please try again.');
   }
-  invalidateDashboardCaches();
 }
 
 export async function ownerDeleteBookingsBulk(
   ids: readonly string[]
 ): Promise<void> {
   if (ids.length === 0) return;
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('bookings')
-    .delete()
-    .in('id', [...ids]);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete selected visit requests. Please try again.'
-      )
-    );
+  try {
+    const { error } = await client
+      .from('bookings')
+      .delete()
+      .in('id', [...ids]);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete selected visit requests. Please try again.'
+        )
+      );
+    }
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete selected visit requests. Please try again.');
   }
-  invalidateDashboardCaches();
 }
 
 export async function ownerMarkInquiryRead(id: string): Promise<void> {
+  assertOnline();
   addLocalReadInquiryId(id);
   const client = requireClient();
-  const { error } = await client
-    .from('inquiries')
-    .update({ is_read: true })
-    .eq('id', id);
-  if (error && !isMissingColumnError(error, 'is_read')) {
-    throw new Error(error.message);
+  try {
+    const { error } = await client
+      .from('inquiries')
+      .update({ is_read: true })
+      .eq('id', id);
+    if (error && !isMissingColumnError(error, 'is_read')) {
+      throw new Error(error.message);
+    }
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not mark enquiry as read.');
   }
-  invalidateDashboardCaches();
 }
 
 export async function ownerUpdateInquiry(
@@ -1720,20 +1968,25 @@ export async function ownerUpdateInquiry(
   status: InquiryStatus,
   ownerNotes: string
 ): Promise<void> {
+  assertOnline();
   addLocalReadInquiryId(id);
   const client = requireClient();
-  let { error } = await client
-    .from('inquiries')
-    .update({ status, owner_notes: ownerNotes, is_read: true })
-    .eq('id', id);
-  if (isMissingColumnError(error, 'is_read')) {
-    ({ error } = await client
+  try {
+    let { error } = await client
       .from('inquiries')
-      .update({ status, owner_notes: ownerNotes })
-      .eq('id', id));
+      .update({ status, owner_notes: ownerNotes, is_read: true })
+      .eq('id', id);
+    if (isMissingColumnError(error, 'is_read')) {
+      ({ error } = await client
+        .from('inquiries')
+        .update({ status, owner_notes: ownerNotes })
+        .eq('id', id));
+    }
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not update enquiry. Please try again.');
   }
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
 }
 
 export async function ownerUpdateBooking(
@@ -1741,108 +1994,175 @@ export async function ownerUpdateBooking(
   status: BookingStatus,
   ownerNote: string
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('bookings')
-    .update({ status, owner_note: ownerNote })
-    .eq('id', id);
-  if (error) throw new Error(error.message);
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client
+      .from('bookings')
+      .update({ status, owner_note: ownerNote })
+      .eq('id', id);
+    if (error) throw new Error(error.message);
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not update site visit. Please try again.');
+  }
 }
 
 export async function ownerUpdateReview(
   id: string,
   patch: { status?: ReviewStatus; is_featured?: boolean }
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.from('reviews').update(patch).eq('id', id);
-  if (error) throw new Error(error.message);
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client.from('reviews').update(patch).eq('id', id);
+    if (error) throw new Error(error.message);
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not update review. Please try again.');
+  }
 }
 
 export async function ownerDeleteReview(id: string): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.from('reviews').delete().eq('id', id);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete review. Please try again.'
-      )
-    );
+  try {
+    const { error } = await client.from('reviews').delete().eq('id', id);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete review. Please try again.'
+        )
+      );
+    }
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete review. Please try again.');
   }
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
 }
 
 export async function ownerDeleteReviewsBulk(
   ids: readonly string[]
 ): Promise<void> {
   if (ids.length === 0) return;
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('reviews')
-    .delete()
-    .in('id', [...ids]);
-  if (error) {
-    throw new Error(
-      formatFriendlyActionError(
-        error.message,
-        'Could not delete selected reviews. Please try again.'
-      )
-    );
+  try {
+    const { error } = await client
+      .from('reviews')
+      .delete()
+      .in('id', [...ids]);
+    if (error) {
+      throw new Error(
+        formatFriendlyActionError(
+          error.message,
+          'Could not delete selected reviews. Please try again.'
+        )
+      );
+    }
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete selected reviews. Please try again.');
   }
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
 }
 
 async function invokeAdminClientFunction<T = Record<string, unknown>>(
   body: Record<string, unknown>,
   fallbackError: string
 ): Promise<T> {
+  assertOnline();
   const client = requireClient();
 
-  let {
-    data: { session },
-  } = await client.auth.getSession();
+  let session;
+  try {
+    const res = await client.auth.getSession();
+    session = res.data.session;
 
-  if (
-    !session?.access_token ||
-    (session.expires_at && session.expires_at * 1000 <= Date.now() + 15_000)
-  ) {
-    const { data: refreshed } = await client.auth.refreshSession();
-    if (refreshed?.session?.access_token) {
-      session = refreshed.session;
+    if (
+      !session?.access_token ||
+      (session.expires_at && session.expires_at * 1000 <= Date.now() + 15_000)
+    ) {
+      const { data: refreshed } = await client.auth.refreshSession();
+      if (refreshed?.session?.access_token) {
+        session = refreshed.session;
+      }
     }
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Your session expired. Please sign in again.');
   }
 
   if (!session?.access_token) {
-    throw new Error('Your session expired. Please sign in again.');
+    const expiredMsg = 'Your session expired. Please sign in again.';
+    notifySessionExpired(expiredMsg);
+    throw new Error(expiredMsg);
   }
 
-  const { data, error } = await client.functions.invoke<
-    T & { error?: string }
-  >('admin-client-actions', {
-    body,
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-    },
-  });
+  let data: (T & { error?: string }) | null = null;
+  let error: unknown = null;
+  try {
+    const invoked = await client.functions.invoke<T & { error?: string }>(
+      'admin-client-actions',
+      {
+        body,
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      }
+    );
+    data = invoked.data;
+    error = invoked.error;
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, fallbackError);
+  }
 
   if (error) {
     let detailedMsg = '';
     const ctx = (error as { context?: Response }).context;
-    if (ctx && typeof ctx.json === 'function') {
+    const status = typeof ctx?.status === 'number' ? ctx.status : 0;
+    if (ctx) {
       try {
-        const parsed = (await ctx.json()) as { error?: string };
-        if (parsed?.error) detailedMsg = parsed.error;
+        const res = typeof ctx.clone === 'function' ? ctx.clone() : ctx;
+        const rawText =
+          typeof res.text === 'function' ? await res.text() : '';
+        if (rawText) {
+          try {
+            const parsed = JSON.parse(rawText) as { error?: string; message?: string };
+            if (parsed?.error) {
+              detailedMsg = String(parsed.error);
+            } else if (parsed?.message) {
+              detailedMsg = String(parsed.message);
+            } else {
+              detailedMsg = rawText;
+            }
+          } catch {
+            detailedMsg = rawText;
+          }
+        }
       } catch {
-        // ignore JSON parse failures
+        // ignore body parse failures
       }
     }
-    throw new Error(
-      formatFriendlyActionError(detailedMsg || error.message, fallbackError)
+
+    const errorMessage = (error as { message?: string })?.message || '';
+    if (status === 401) {
+      const exact401 = detailedMsg || errorMessage || 'Your session expired. Please sign in again.';
+      notifySessionExpired(exact401);
+      throw new Error(exact401);
+    }
+    if (status === 403) {
+      throw new Error(detailedMsg || errorMessage || 'Only the owner account can do this.');
+    }
+
+    if (!detailedMsg && status >= 400) {
+      detailedMsg = String(status);
+    }
+    throw toUserFriendlyNetworkError(
+      new Error(formatFriendlyActionError(detailedMsg || errorMessage, fallbackError)),
+      fallbackError
     );
   }
 
@@ -1855,20 +2175,174 @@ async function invokeAdminClientFunction<T = Record<string, unknown>>(
   return (data ?? {}) as T;
 }
 
+async function deleteClientsViaOwnerRlsFallback(
+  clientIds: readonly string[],
+  verifiedOwnerProfile: UserProfile
+): Promise<string[]> {
+  assertOnline();
+  const client = requireClient();
+  const normalizedOwnerId = normalizeIdentifier(verifiedOwnerProfile.id);
+  const cleanTargetIds = Array.from(
+    new Set(
+      clientIds
+        .map((id) => String(id || '').trim())
+        .filter(
+          (id) => Boolean(id) && normalizeIdentifier(id) !== normalizedOwnerId
+        )
+    )
+  );
+
+  if (cleanTargetIds.length === 0) {
+    throw new Error('Owner accounts cannot be deleted here.');
+  }
+
+  const { data: targetProfiles, error: targetErr } = await client
+    .from('profiles')
+    .select('id, email, role')
+    .in('id', cleanTargetIds);
+
+  if (targetErr) {
+    throw new Error(
+      formatFriendlyActionError(
+        targetErr.message,
+        'Could not delete client account. Please try again.'
+      )
+    );
+  }
+
+  const profilesList = targetProfiles || [];
+  if (profilesList.some((p) => isOwnerRole(p.role))) {
+    throw new Error('Owner accounts cannot be deleted here.');
+  }
+
+  const emails = Array.from(
+    new Set(
+      profilesList
+        .map((p) => normalizeIdentifier(p.email))
+        .filter(Boolean)
+    )
+  );
+
+  const cleanups = await Promise.all([
+    client.from('favourites').delete().in('user_id', cleanTargetIds),
+    client.from('saved_searches').delete().in('user_id', cleanTargetIds),
+    client.from('customer_preferences').delete().in('user_id', cleanTargetIds),
+    client.from('bookings').delete().in('user_id', cleanTargetIds),
+    client.from('inquiries').delete().in('user_id', cleanTargetIds),
+    client.from('reviews').delete().in('user_id', cleanTargetIds),
+  ]);
+
+  const cleanupErr = cleanups.find((res) => res.error)?.error;
+  if (cleanupErr) {
+    throw new Error(
+      formatFriendlyActionError(
+        cleanupErr.message,
+        'Could not delete client account. Please try again.'
+      )
+    );
+  }
+
+  for (const email of emails) {
+    const emailCleanups = await Promise.all([
+      client
+        .from('inquiries')
+        .delete()
+        .is('user_id', null)
+        .ilike('email', email),
+      client
+        .from('reviews')
+        .delete()
+        .is('user_id', null)
+        .ilike('email', email),
+    ]);
+    const emailErr = emailCleanups.find((res) => res.error)?.error;
+    if (emailErr) {
+      throw new Error(
+        formatFriendlyActionError(
+          emailErr.message,
+          'Could not delete client account. Please try again.'
+        )
+      );
+    }
+  }
+
+  const { data: deletedProfiles, error: profDelErr } = await client
+    .from('profiles')
+    .delete()
+    .in('id', cleanTargetIds)
+    .neq('role', 'owner')
+    .select('id');
+
+  if (profDelErr) {
+    throw new Error(
+      formatFriendlyActionError(
+        profDelErr.message,
+        'Could not delete client account. Please try again.'
+      )
+    );
+  }
+
+  if (!deletedProfiles || deletedProfiles.length === 0) {
+    throw new Error('Only the owner account can do this.');
+  }
+
+  return deletedProfiles.map((p) => String(p.id));
+}
+
 export async function ownerDeleteClientsBulk(
   clientIds: readonly string[]
 ): Promise<string[]> {
   if (clientIds.length === 0) return [];
-  const res = await invokeAdminClientFunction<{ deletedIds?: string[] }>(
-    {
-      action: 'delete-clients',
-      clientIds: [...clientIds],
-    },
-    'Could not delete client account. Please try again.'
-  );
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
-  return Array.isArray(res.deletedIds) ? res.deletedIds : [...clientIds];
+  assertOnline();
+  try {
+    const res = await invokeAdminClientFunction<{ deletedIds?: string[] }>(
+      {
+        action: 'delete-clients',
+        clientIds: [...clientIds],
+      },
+      'Could not delete client account. Please try again.'
+    );
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+    return Array.isArray(res.deletedIds) ? res.deletedIds : [...clientIds];
+  } catch (edgeErr) {
+    const edgeMessage =
+      edgeErr instanceof Error ? edgeErr.message.toLowerCase() : '';
+    if (
+      edgeMessage.includes('no internet') ||
+      edgeMessage.includes('session expired') ||
+      edgeMessage.includes('jwt') ||
+      edgeMessage.includes('unauthorized') ||
+      edgeMessage.includes('401')
+    ) {
+      throw edgeErr;
+    }
+
+    // Verify signed-in user is genuinely the owner in public.profiles and delete
+    // client records directly via owner RLS policies (002_admin_dashboard_updates.sql)
+    // if the Edge Function rejected or was unreachable.
+    let currentProfile: UserProfile | null = null;
+    try {
+      currentProfile = await getCurrentSessionProfile();
+    } catch {
+      throw edgeErr;
+    }
+    if (!currentProfile || !isOwnerRole(currentProfile.role)) {
+      throw edgeErr;
+    }
+
+    try {
+      const deletedIds = await deleteClientsViaOwnerRlsFallback(
+        clientIds,
+        currentProfile
+      );
+      invalidatePublicCaches();
+      invalidateDashboardCaches();
+      return deletedIds;
+    } catch {
+      throw edgeErr;
+    }
+  }
 }
 
 export async function ownerDeleteClient(clientId: string): Promise<void> {
@@ -1902,6 +2376,7 @@ export async function ownerSaveTeamMember(
     is_visible: boolean;
   }
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
   const payload = {
     name: input.name.trim(),
@@ -1914,76 +2389,95 @@ export async function ownerSaveTeamMember(
     is_visible: Boolean(input.is_visible),
   };
 
-  if (editingId) {
-    const { error } = await client
-      .from('team_members')
-      .update(payload)
-      .eq('id', editingId);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await client.from('team_members').insert(payload);
-    if (error) throw new Error(error.message);
+  try {
+    if (editingId) {
+      const { error } = await client
+        .from('team_members')
+        .update(payload)
+        .eq('id', editingId);
+      if (error) throw new Error(error.message);
+    } else {
+      const { error } = await client.from('team_members').insert(payload);
+      if (error) throw new Error(error.message);
+    }
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not save team member. Please try again.');
   }
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
 }
 
 export async function ownerToggleTeamMemberVisibility(
   id: string,
   isVisible: boolean
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client
-    .from('team_members')
-    .update({ is_visible: isVisible })
-    .eq('id', id);
-  if (error) throw new Error(error.message);
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client
+      .from('team_members')
+      .update({ is_visible: isVisible })
+      .eq('id', id);
+    if (error) throw new Error(error.message);
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not update advisor visibility.');
+  }
 }
 
 export async function ownerDeleteTeamMember(id: string): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.from('team_members').delete().eq('id', id);
-  if (error) throw new Error(error.message);
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
+  try {
+    const { error } = await client.from('team_members').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not delete team member.');
+  }
 }
 
 export async function ownerSaveSiteSettings(
   settings: WebsiteSettings
 ): Promise<void> {
+  assertOnline();
   const client = requireClient();
-  const { error } = await client.from('site_settings').upsert(
-    {
-      id: 'default',
-      business_name: settings.business_name.trim(),
-      tagline: settings.tagline.trim(),
-      about_text: settings.description.trim(),
-      address: settings.address.trim(),
-      phone: settings.phone.trim(),
-      whatsapp: settings.whatsapp.trim(),
-      logo_url: settings.logo_url.trim(),
-      hero_headline: settings.hero_headline.trim(),
-      hero_subheadline: settings.hero_subheadline.trim(),
-      hero_image_url: settings.hero_image_url.trim(),
-      about_image_url: settings.about_image_url.trim(),
-      hours: {
-        ...settings.operating_hours,
-        service_images: settings.service_images || {},
+  try {
+    const { error } = await client.from('site_settings').upsert(
+      {
+        id: 'default',
+        business_name: settings.business_name.trim(),
+        tagline: settings.tagline.trim(),
+        about_text: settings.description.trim(),
+        address: settings.address.trim(),
+        phone: settings.phone.trim(),
+        whatsapp: settings.whatsapp.trim(),
+        logo_url: settings.logo_url.trim(),
+        hero_headline: settings.hero_headline.trim(),
+        hero_subheadline: settings.hero_subheadline.trim(),
+        hero_image_url: settings.hero_image_url.trim(),
+        about_image_url: settings.about_image_url.trim(),
+        hours: {
+          ...settings.operating_hours,
+          service_images: settings.service_images || {},
+        },
+        locations: settings.locations,
+        property_types: settings.property_types,
+        social_links: {
+          ...settings.social_links,
+          google_review: (settings.google_review_link || '').trim(),
+          email: (settings.email || DEFAULT_SITE_SETTINGS.email || '').trim(),
+        },
+        updated_at: new Date().toISOString(),
       },
-      locations: settings.locations,
-      property_types: settings.property_types,
-      social_links: {
-        ...settings.social_links,
-        google_review: (settings.google_review_link || '').trim(),
-        email: (settings.email || DEFAULT_SITE_SETTINGS.email || '').trim(),
-      },
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'id' }
-  );
-  if (error) throw new Error(error.message);
-  invalidatePublicCaches();
-  invalidateDashboardCaches();
+      { onConflict: 'id' }
+    );
+    if (error) throw new Error(error.message);
+    invalidatePublicCaches();
+    invalidateDashboardCaches();
+  } catch (err) {
+    throw toUserFriendlyNetworkError(err, 'Could not save website settings. Please try again.');
+  }
 }

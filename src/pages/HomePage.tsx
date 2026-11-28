@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AnimatePresence,
   motion,
@@ -27,7 +27,7 @@ import {
   Phone,
   Tag,
 } from 'lucide-react';
-import { LUX_EASE } from '../lib/motion';
+import { LUX_EASE, navigateWithTransition } from '../lib/motion';
 import { useApp } from '../context/AppContext';
 import {
   fetchPublicPropertiesWithMeta,
@@ -158,6 +158,7 @@ function splitHeadlineLines(headline: string): string[] {
 
 export const HomePage: React.FC = () => {
   const { settings, user, openAuthModal, showToast } = useApp();
+  const navigate = useNavigate();
   const prefersReduced = !!useReducedMotion();
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 768 : true
@@ -243,6 +244,16 @@ export const HomePage: React.FC = () => {
     propertyType: 'All',
     budgetIdx: 0,
   });
+  const [navigatingSearch, setNavigatingSearch] = useState(false);
+  const searchNavTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (searchNavTimerRef.current !== null) {
+        window.clearTimeout(searchNavTimerRef.current);
+      }
+    };
+  }, []);
 
   // Properties section tab state ('all' | 'featured')
   const [propertyTab, setPropertyTab] = useState<'all' | 'featured'>('all');
@@ -404,21 +415,39 @@ export const HomePage: React.FC = () => {
     return { items, reasonsById };
   }, [user, recommendations, activeProperties]);
 
-  const scrollToResults = () => {
-    window.requestAnimationFrame(() => {
-      resultsSectionRef.current?.scrollIntoView({
-        behavior: prefersReduced ? 'auto' : 'smooth',
-        block: 'start',
-      });
-    });
+  const buildPropertiesHref = (state: SmartSearchState): string => {
+    const params = new URLSearchParams();
+    if (state.listing !== 'All') params.set('type', state.listing);
+    if (state.location !== 'All') params.set('location', state.location);
+    if (state.propertyType !== 'All') params.set('category', state.propertyType);
+    const budget = SMART_BUDGET_RANGES[state.budgetIdx];
+    if (budget?.min !== '' && budget?.min !== undefined) {
+      params.set('minPrice', String(budget.min));
+    }
+    if (budget?.max !== '' && budget?.max !== undefined) {
+      params.set('maxPrice', String(budget.max));
+    }
+    const qs = params.toString();
+    return qs ? `/properties?${qs}` : '/properties';
   };
 
   const handleSearchSubmit = (overrideState?: SmartSearchState) => {
+    const nextState = overrideState ?? searchState;
     if (overrideState) {
       setSearchState(overrideState);
     }
-    setPropertyTab('all');
-    scrollToResults();
+    const targetHref = buildPropertiesHref(nextState);
+    setNavigatingSearch(true);
+    if (searchNavTimerRef.current !== null) {
+      window.clearTimeout(searchNavTimerRef.current);
+    }
+    if (prefersReduced) {
+      navigateWithTransition(navigate, targetHref);
+      return;
+    }
+    searchNavTimerRef.current = window.setTimeout(() => {
+      navigateWithTransition(navigate, targetHref);
+    }, 120);
   };
 
   const handleClearAllSearch = () => {
@@ -431,26 +460,10 @@ export const HomePage: React.FC = () => {
     });
   };
 
-  const viewAllPropertiesHref = useMemo(() => {
-    const params = new URLSearchParams();
-    if (searchState.query.trim()) params.set('q', searchState.query.trim());
-    if (searchState.location !== 'All') {
-      params.set('location', searchState.location);
-    }
-    if (searchState.propertyType !== 'All') {
-      params.set('category', searchState.propertyType);
-    }
-    if (searchState.listing !== 'All') params.set('type', searchState.listing);
-    const budget = SMART_BUDGET_RANGES[searchState.budgetIdx];
-    if (budget?.min !== '' && budget?.min !== undefined) {
-      params.set('minPrice', String(budget.min));
-    }
-    if (budget?.max !== '' && budget?.max !== undefined) {
-      params.set('maxPrice', String(budget.max));
-    }
-    const qs = params.toString();
-    return qs ? `/properties?${qs}` : '/properties';
-  }, [searchState]);
+  const viewAllPropertiesHref = useMemo(
+    () => buildPropertiesHref(searchState),
+    [searchState]
+  );
 
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -844,12 +857,11 @@ export const HomePage: React.FC = () => {
         searchState={searchState}
         onChangeState={setSearchState}
         onSearchSubmit={handleSearchSubmit}
-        onClearAll={handleClearAllSearch}
-        activeProperties={activeProperties}
         serviceLocations={uniqueLocations}
         propertyTypes={propertyTypes}
-        liveMatchingCount={filteredAvailableProperties.length}
         prefersReduced={prefersReduced}
+        isSubmitting={navigatingSearch}
+        isLandscapeCompact={isLandscapeCompact}
       />
 
       {/* 3. RECOMMENDED PROPERTIES — 3D COVER FLOW */}

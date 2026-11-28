@@ -146,6 +146,20 @@ export function buildWhatsappChatHref(
 }
 
 /**
+ * Normalizes an email, role, or UUID string with trim + lowercase for safe comparisons.
+ */
+export function normalizeIdentifier(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/**
+ * Checks whether a profile role string represents the owner account (case-insensitive, trimmed).
+ */
+export function isOwnerRole(role: unknown): boolean {
+  return normalizeIdentifier(role) === 'owner';
+}
+
+/**
  * Converts raw database/auth/Edge-Function errors into concise, human-readable copy.
  */
 export function formatFriendlyActionError(
@@ -168,6 +182,7 @@ export function formatFriendlyActionError(
 
   if (
     lower.includes('only the owner') ||
+    lower.includes('owner check failed') ||
     lower.includes('row-level security') ||
     lower.includes('permission denied') ||
     lower.includes('forbidden') ||

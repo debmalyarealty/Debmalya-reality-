@@ -6,6 +6,8 @@ import {
   filterClientsBySearch,
   formatFriendlyActionError,
   generateTemporaryPassword,
+  isOwnerRole,
+  normalizeIdentifier,
   validateNewPassword,
 } from './adminHelpers.ts';
 import type { UserProfile } from '../types/realty.ts';
@@ -126,6 +128,20 @@ describe('formatFriendlyActionError', () => {
         'Could not delete. Please try again.'
       ),
       'Your session expired. Please sign in again.'
+    );
+  });
+});
+
+describe('isOwnerRole & normalizeIdentifier', () => {
+  it('performs case-insensitive and whitespace-trimmed owner & identifier checks', () => {
+    assert.equal(isOwnerRole('owner'), true);
+    assert.equal(isOwnerRole('  Owner  '), true);
+    assert.equal(isOwnerRole('OWNER'), true);
+    assert.equal(isOwnerRole('client'), false);
+    assert.equal(isOwnerRole(null), false);
+    assert.equal(
+      normalizeIdentifier('  DebmalyaRealty@GMAIL.com '),
+      'debmalyarealty@gmail.com'
     );
   });
 });

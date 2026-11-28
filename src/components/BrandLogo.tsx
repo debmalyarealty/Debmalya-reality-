@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 
 interface BrandLogoProps {
@@ -13,14 +13,20 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   const { settings } = useApp();
   const logoUrl = settings?.logo_url;
   const businessName = settings?.business_name || 'Debmalya Realty';
+  const [logoError, setLogoError] = useState(false);
+
+  useEffect(() => {
+    setLogoError(false);
+  }, [logoUrl]);
 
   return (
     <span className="inline-flex items-center gap-[clamp(0.4rem,1.4vw,0.75rem)] min-w-0 max-w-full overflow-hidden">
-      {logoUrl ? (
+      {logoUrl && !logoError ? (
         <img
           src={logoUrl}
           alt={businessName}
           referrerPolicy="no-referrer"
+          onError={() => setLogoError(true)}
           className="h-[clamp(22px,5vw,32px)] w-[clamp(22px,5vw,32px)] rounded-full object-contain shrink-0"
         />
       ) : (

@@ -19,13 +19,13 @@ function formatPriceSuffix(
 }
 
 export function formatINR(
-  amount: number,
+  amount: number | null | undefined,
   listingType?: ListingType,
   compact = false,
   priceUnit?: PriceUnit
 ): string {
-  if (!Number.isFinite(amount) || amount < 0) {
-    return 'Price on Request';
+  if (amount == null || !Number.isFinite(amount) || amount <= 0) {
+    return 'Price on request';
   }
 
   let formatted = '';
@@ -47,12 +47,12 @@ export function formatINR(
 }
 
 export function formatINRReadable(
-  amount: number,
+  amount: number | null | undefined,
   listingType?: ListingType,
   priceUnit?: PriceUnit
 ): string {
-  if (!Number.isFinite(amount) || amount < 0) {
-    return 'Price on Request';
+  if (amount == null || !Number.isFinite(amount) || amount <= 0) {
+    return 'Price on request';
   }
 
   let formatted = '';
@@ -228,7 +228,21 @@ export function filterAndSortProperties(
   const parking = (filters.parking || '').trim().toLowerCase();
   const statusFilter = (filters.status || '').trim();
 
-  const filtered = properties.filter((prop) => {
+  const safeProperties = Array.isArray(properties)
+    ? properties.filter((p): p is Property => Boolean(p))
+    : [];
+
+  const filtered = safeProperties.filter((prop) => {
+    const propPrice = Number(prop.price_inr) || 0;
+    const propBedrooms = Number(prop.bedrooms) || 0;
+    const propBathrooms = Number(prop.bathrooms) || 0;
+    const propArea = Number(prop.area_sqft) || 0;
+    const propLocation = prop.location || '';
+    const propType = prop.property_type || '';
+    const propFurnishing = prop.furnishing || '';
+    const propParking = prop.parking || '';
+    const propAmenities = Array.isArray(prop.amenities) ? prop.amenities : [];
+
     if (publicOnly && !prop.is_published) return false;
 
     // Sold / Rented properties are excluded when user filters for active availability
@@ -252,7 +266,7 @@ export function filterAndSortProperties(
     }
 
     if (loc && loc !== 'all' && loc !== 'all locations') {
-      const propLoc = prop.location.toLowerCase();
+      const propLoc = propLocation.toLowerCase();
       const propAddr = (prop.address_detail || '').toLowerCase();
       if (!propLoc.includes(loc) && !propAddr.includes(loc)) {
         return false;
@@ -260,7 +274,7 @@ export function filterAndSortProperties(
     }
 
     if (pType && pType !== 'all' && pType !== 'all types') {
-      if (prop.property_type.toLowerCase() !== pType) {
+      if (propType.toLowerCase() !== pType) {
         return false;
       }
     }
@@ -270,7 +284,7 @@ export function filterAndSortProperties(
       filters.minPrice !== '' &&
       Number.isFinite(Number(filters.minPrice))
     ) {
-      if (prop.price_inr < Number(filters.minPrice)) return false;
+      if (propPrice < Number(filters.minPrice)) return false;
     }
 
     if (
@@ -278,7 +292,7 @@ export function filterAndSortProperties(
       filters.maxPrice !== '' &&
       Number.isFinite(Number(filters.maxPrice))
     ) {
-      if (prop.price_inr > Number(filters.maxPrice)) return false;
+      if (propPrice > Number(filters.maxPrice)) return false;
     }
 
     if (
@@ -286,7 +300,7 @@ export function filterAndSortProperties(
       filters.minBedrooms !== '' &&
       Number.isFinite(Number(filters.minBedrooms))
     ) {
-      if (prop.bedrooms < Number(filters.minBedrooms)) return false;
+      if (propBedrooms < Number(filters.minBedrooms)) return false;
     }
 
     if (
@@ -294,7 +308,7 @@ export function filterAndSortProperties(
       filters.minBathrooms !== '' &&
       Number.isFinite(Number(filters.minBathrooms))
     ) {
-      if (prop.bathrooms < Number(filters.minBathrooms)) return false;
+      if (propBathrooms < Number(filters.minBathrooms)) return false;
     }
 
     if (
@@ -302,30 +316,30 @@ export function filterAndSortProperties(
       filters.minArea !== '' &&
       Number.isFinite(Number(filters.minArea))
     ) {
-      if (prop.area_sqft < Number(filters.minArea)) return false;
+      if (propArea < Number(filters.minArea)) return false;
     }
 
     if (furnishing && furnishing !== 'all') {
-      if (prop.furnishing.toLowerCase() !== furnishing) return false;
+      if (propFurnishing.toLowerCase() !== furnishing) return false;
     }
 
     if (parking && parking !== 'all') {
       const hasParking =
-        prop.parking.trim() !== '' &&
-        !prop.parking.toLowerCase().includes('none') &&
-        prop.parking.toLowerCase() !== 'no';
+        propParking.trim() !== '' &&
+        !propParking.toLowerCase().includes('none') &&
+        propParking.toLowerCase() !== 'no';
       if (parking === 'available' && !hasParking) return false;
       if (parking === 'none' && hasParking) return false;
     }
 
     if (q) {
       const haystack = [
-        prop.title,
-        prop.description,
-        prop.location,
+        prop.title || '',
+        prop.description || '',
+        propLocation,
         prop.address_detail || '',
-        prop.property_type,
-        ...prop.amenities,
+        propType,
+        ...propAmenities,
       ]
         .join(' ')
         .toLowerCase();
@@ -337,9 +351,14 @@ export function filterAndSortProperties(
 
   const sortBy = filters.sortBy || 'newest';
   return [...filtered].sort((a, b) => {
-    if (sortBy === 'price_asc') return a.price_inr - b.price_inr;
-    if (sortBy === 'price_desc') return b.price_inr - a.price_inr;
-    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    const aPrice = Number(a.price_inr) || 0;
+    const bPrice = Number(b.price_inr) || 0;
+    if (sortBy === 'price_asc') return aPrice - bPrice;
+    if (sortBy === 'price_desc') return bPrice - aPrice;
+    return (
+      (new Date(b.created_at || 0).getTime() || 0) -
+      (new Date(a.created_at || 0).getTime() || 0)
+    );
   });
 }
 
@@ -354,7 +373,10 @@ export function computeRecommendations(
   preferences: CustomerPreferences | null,
   limit = 6
 ): RecommendedProperty[] {
-  const activePublished = properties.filter(
+  const safeProperties = Array.isArray(properties)
+    ? properties.filter((p): p is Property => Boolean(p))
+    : [];
+  const activePublished = safeProperties.filter(
     (p) => p.is_published && isPropertyActiveOpportunity(p.status)
   );
 
@@ -363,7 +385,8 @@ export function computeRecommendations(
       .sort((a, b) => {
         if (a.is_featured !== b.is_featured) return a.is_featured ? -1 : 1;
         return (
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          (new Date(b.created_at || 0).getTime() || 0) -
+          (new Date(a.created_at || 0).getTime() || 0)
         );
       })
       .slice(0, limit)
@@ -379,6 +402,10 @@ export function computeRecommendations(
   const scored: RecommendedProperty[] = activePublished.map((property) => {
     let score = 0;
     const reasons: string[] = [];
+    const propLocation = property.location || '';
+    const propType = property.property_type || '';
+    const propPrice = Number(property.price_inr) || 0;
+    const propBedrooms = Number(property.bedrooms) || 0;
 
     if (
       preferences.listing_type === 'Both' ||
@@ -396,44 +423,40 @@ export function computeRecommendations(
     ) {
       const prefLoc = preferences.preferred_location.toLowerCase();
       if (
-        property.location.toLowerCase().includes(prefLoc) ||
+        propLocation.toLowerCase().includes(prefLoc) ||
         (property.address_detail || '').toLowerCase().includes(prefLoc)
       ) {
         score += 35;
-        reasons.push(`In ${property.location}`);
+        reasons.push(`In ${propLocation}`);
       }
     }
 
     if (
       preferences.property_type &&
       preferences.property_type !== 'All' &&
-      property.property_type.toLowerCase() ===
-        preferences.property_type.toLowerCase()
+      propType.toLowerCase() === preferences.property_type.toLowerCase()
     ) {
       score += 25;
-      reasons.push(property.property_type);
+      reasons.push(propType);
     }
 
     const minB = preferences.min_budget ?? 0;
     const maxB = preferences.max_budget ?? Number.MAX_SAFE_INTEGER;
-    if (property.price_inr >= minB && property.price_inr <= maxB) {
+    if (propPrice >= minB && propPrice <= maxB) {
       score += 20;
       if (preferences.max_budget || preferences.min_budget) {
         reasons.push('Within budget');
       }
     } else if (
       preferences.max_budget &&
-      property.price_inr <= preferences.max_budget * 1.15
+      propPrice <= preferences.max_budget * 1.15
     ) {
       score += 8;
     }
 
-    if (
-      preferences.min_bedrooms &&
-      property.bedrooms >= preferences.min_bedrooms
-    ) {
+    if (preferences.min_bedrooms && propBedrooms >= preferences.min_bedrooms) {
       score += 10;
-      reasons.push(`${property.bedrooms} BHK+`);
+      reasons.push(`${propBedrooms} BHK+`);
     }
 
     if (property.status === 'Available') {

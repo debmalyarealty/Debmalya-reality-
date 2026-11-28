@@ -1,91 +1,86 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import {
-  Building2,
-  ChevronDown,
-  MapPin,
-  Search,
-  SlidersHorizontal,
-  X,
-} from 'lucide-react';
-import { LUX_EASE } from '../lib/motion';
-import type { Property } from '../types/realty';
-import {
-  buildActiveFilterChips,
-  buildSearchSuggestions,
-  formatPropertiesCount,
-  QUICK_FILTER_CHIPS,
-  SMART_BUDGET_RANGES,
-  type ActiveFilterChipKey,
-  type SearchSuggestion,
-  type SmartSearchState,
-} from '../lib/searchHelpers';
+import { Check, ChevronDown, Loader2, Search } from 'lucide-react';
+import { SMART_BUDGET_RANGES, type SmartSearchState } from '../lib/searchHelpers';
 
 interface SmartSearchBlockProps {
   searchState: SmartSearchState;
   onChangeState: React.Dispatch<React.SetStateAction<SmartSearchState>>;
   onSearchSubmit: (overrideState?: SmartSearchState) => void;
-  onClearAll: () => void;
-  activeProperties: Property[];
   serviceLocations: string[];
   propertyTypes: string[];
-  liveMatchingCount: number;
   prefersReduced: boolean;
+  isSubmitting?: boolean;
+  isLandscapeCompact?: boolean;
 }
 
-export const SmartSearchBlock: React.FC<SmartSearchBlockProps> = ({
-  searchState,
-  onChangeState,
-  onSearchSubmit,
-  onClearAll,
-  activeProperties,
-  serviceLocations,
-  propertyTypes,
-  liveMatchingCount,
+interface DropdownOption {
+  value: string;
+  label: string;
+}
+
+interface SearchSelectFieldProps {
+  id: string;
+  label: string;
+  displayValue: string;
+  value: string;
+  options: DropdownOption[];
+  onSelect: (value: string) => void;
+  isOpen: boolean;
+  onToggleOpen: () => void;
+  onClose: () => void;
+  prefersReduced: boolean;
+  showLeftDividerOnTablet?: boolean;
+  showLeftDividerOnDesktop?: boolean;
+  alignPopoverRight?: boolean;
+  staggerIndex: number;
+  tabular?: boolean;
+}
+
+const EASE_OUT = [0.16, 1, 0.3, 1] as const;
+
+const SearchSelectField: React.FC<SearchSelectFieldProps> = ({
+  id,
+  label,
+  displayValue,
+  value,
+  options,
+  onSelect,
+  isOpen,
+  onToggleOpen,
+  onClose,
   prefersReduced,
+  showLeftDividerOnTablet = false,
+  showLeftDividerOnDesktop = false,
+  alignPopoverRight = false,
+  staggerIndex,
+  tabular = false,
 }) => {
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [dropdownTarget, setDropdownTarget] = useState<
-    'mobile' | 'desktop' | null
-  >(null);
-  const [highlightedIdx, setHighlightedIdx] = useState(-1);
-  const [sheetDragY, setSheetDragY] = useState(0);
-
-  const mobileCardRef = useRef<HTMLDivElement>(null);
-  const desktopCardRef = useRef<HTMLFormElement>(null);
-  const swipeStartYRef = useRef<number | null>(null);
-  const swipeStartTimeRef = useRef<number>(0);
-
-  const mobileListboxId = useId();
-  const desktopListboxId = useId();
-
-  const suggestions = useMemo(
-    () =>
-      buildSearchSuggestions(
-        searchState.query,
-        activeProperties,
-        serviceLocations
-      ),
-    [searchState.query, activeProperties, serviceLocations]
+  const listboxId = useId();
+  const fieldRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const hasInteractedRef = useRef(false);
+  const [highlightedIndex, setHighlightedIndex] = useState<number>(() =>
+    Math.max(
+      0,
+      options.findIndex((opt) => opt.value === value)
+    )
   );
 
-  const activeChips = useMemo(
-    () => buildActiveFilterChips(searchState),
-    [searchState]
-  );
-
-  // Close suggestions dropdown on outside click
+  // Sync highlighted option index when dropdown opens
   useEffect(() => {
-    if (!dropdownTarget) return;
+    if (!isOpen) return;
+    const idx = options.findIndex((opt) => opt.value === value);
+    setHighlightedIndex(idx >= 0 ? idx : 0);
+  }, [isOpen, options, value]);
+
+  // Close custom dropdown on outside pointer interaction
+  useEffect(() => {
+    if (!isOpen) return;
     const handleOutside = (e: MouseEvent | TouchEvent) => {
       const target = e.target as Node | null;
-      if (!target) return;
-      const inMobile = mobileCardRef.current?.contains(target);
-      const inDesktop = desktopCardRef.current?.contains(target);
-      if (!inMobile && !inDesktop) {
-        setDropdownTarget(null);
-        setHighlightedIdx(-1);
+      if (target && fieldRef.current && !fieldRef.current.contains(target)) {
+        onClose();
       }
     };
     document.addEventListener('mousedown', handleOutside);
@@ -94,29 +89,279 @@ export const SmartSearchBlock: React.FC<SmartSearchBlockProps> = ({
       document.removeEventListener('mousedown', handleOutside);
       document.removeEventListener('touchstart', handleOutside);
     };
-  }, [dropdownTarget]);
+  }, [isOpen, onClose]);
 
-  // Body scroll lock & Escape handler for Filters bottom sheet
-  useEffect(() => {
-    if (!sheetOpen) {
-      setSheetDragY(0);
+  const handleChoose = (nextValue: string) => {
+    hasInteractedRef.current = true;
+    onSelect(nextValue);
+  };
+
+  const handleDesktopKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'Escape') {
+      if (isOpen) {
+        e.preventDefault();
+        onClose();
+        triggerRef.current?.focus();
+      }
       return;
     }
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSheetOpen(false);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [sheetOpen]);
 
-  const hasQueryText = searchState.query.trim().length > 0;
-  const showMobileDropdown = dropdownTarget === 'mobile' && hasQueryText;
-  const showDesktopDropdown = dropdownTarget === 'desktop' && hasQueryText;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!isOpen) {
+        onToggleOpen();
+      } else {
+        setHighlightedIndex((prev) =>
+          prev < options.length - 1 ? prev + 1 : 0
+        );
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!isOpen) {
+        onToggleOpen();
+      } else {
+        setHighlightedIndex((prev) =>
+          prev > 0 ? prev - 1 : options.length - 1
+        );
+      }
+      return;
+    }
+
+    if (e.key === 'Home' && isOpen) {
+      e.preventDefault();
+      setHighlightedIndex(0);
+      return;
+    }
+
+    if (e.key === 'End' && isOpen) {
+      e.preventDefault();
+      setHighlightedIndex(Math.max(0, options.length - 1));
+      return;
+    }
+
+    if (e.key === 'Enter' || e.key === ' ') {
+      if (isOpen && options[highlightedIndex]) {
+        e.preventDefault();
+        handleChoose(options[highlightedIndex].value);
+        onClose();
+        triggerRef.current?.focus();
+      }
+    }
+  };
+
+  const dividerClass = showLeftDividerOnTablet
+    ? 'hidden md:block md:mx-1 min-[1025px]:mx-1.5'
+    : showLeftDividerOnDesktop
+    ? 'hidden min-[1025px]:block min-[1025px]:mx-1.5'
+    : 'hidden';
+
+  return (
+    <motion.div
+      ref={fieldRef}
+      initial={prefersReduced ? false : { opacity: 0, y: 12 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.15 }}
+      transition={{
+        duration: prefersReduced ? 0.01 : 0.34,
+        delay: prefersReduced ? 0 : 0.08 + staggerIndex * 0.07,
+        ease: EASE_OUT,
+      }}
+      className="relative min-w-0 flex items-center"
+    >
+      {/* Vertical divider on Tablet Row 2 & Desktop 1-Row */}
+      {(showLeftDividerOnTablet || showLeftDividerOnDesktop) && (
+        <span
+          aria-hidden="true"
+          className={`${dividerClass} w-px h-8 shrink-0 bg-[var(--border-hairline)]`}
+        />
+      )}
+
+      <div
+        className={`group/field relative flex-1 min-w-0 min-h-[52px] md:min-h-[54px] rounded-[14px] border transition-colors duration-200 ease-out motion-reduce:transition-none ${
+          isOpen
+            ? 'border-[#B08D57] dark:border-[#DEC085] bg-[var(--bg-surface-muted)]/60'
+            : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)] md:border-transparent md:bg-transparent'
+        }`}
+      >
+        {/* Subtle desktop hover background lift (opacity only) */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none hidden md:block absolute inset-0 rounded-[14px] bg-[var(--bg-surface-muted)]/65 opacity-0 group-hover/field:opacity-100 transition-opacity duration-200 ease-out motion-reduce:transition-none"
+        />
+
+        {/* Animated gold border & bottom draw-in indicator on focus/open (transform + opacity only) */}
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-0 rounded-[14px] border border-[#B08D57] dark:border-[#DEC085] transition-opacity duration-200 ease-out motion-reduce:transition-none ${
+            isOpen
+              ? 'opacity-100'
+              : 'opacity-0 group-focus-within/field:opacity-100'
+          }`}
+        />
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute left-3 right-3 bottom-0 h-[2px] rounded-full bg-[var(--accent-secondary)] origin-center transition-[transform,opacity] duration-250 ease-out motion-reduce:transition-none ${
+            isOpen
+              ? 'scale-x-100 opacity-100'
+              : 'scale-x-0 opacity-0 group-focus-within/field:scale-x-100 group-focus-within/field:opacity-100'
+          }`}
+        />
+
+        {/* Shared visual field layout: small label on top, selected value below, chevron on right */}
+        <div className="relative z-10 flex items-center justify-between gap-1.5 sm:gap-2 min-h-[52px] md:min-h-[54px] px-3 sm:px-3.5 md:px-4 py-2 pointer-events-none">
+          <div className="min-w-0 flex-1 text-left">
+            <span
+              className={`block text-xs font-medium leading-tight transition-colors duration-200 ease-out ${
+                isOpen
+                  ? 'text-[var(--accent-primary)]'
+                  : 'text-[var(--text-muted)] group-focus-within/field:text-[var(--accent-primary)]'
+              }`}
+            >
+              {label}
+            </span>
+
+            <div className="mt-0.5 overflow-hidden">
+              <motion.span
+                key={`${id}-${value}`}
+                initial={
+                  !hasInteractedRef.current || prefersReduced
+                    ? false
+                    : { opacity: 0, y: 5 }
+                }
+                animate={{ opacity: 1, y: 0 }}
+                transition={{
+                  duration: prefersReduced ? 0.01 : 0.22,
+                  ease: EASE_OUT,
+                }}
+                className={`block text-[15px] leading-snug font-medium text-[var(--text-primary)] truncate ${
+                  tabular ? 'tabular-nums' : ''
+                }`}
+              >
+                {displayValue}
+              </motion.span>
+            </div>
+          </div>
+
+          <ChevronDown
+            aria-hidden="true"
+            className={`w-4 h-4 shrink-0 text-[var(--text-muted)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
+              isOpen
+                ? 'rotate-180 text-[var(--accent-primary)]'
+                : 'group-hover/field:translate-y-[1.5px] group-hover/field:text-[var(--text-primary)]'
+            }`}
+          />
+        </div>
+
+        {/* MOBILE (< 768px): Native OS <select> for accessible touch picking */}
+        <select
+          id={`${id}-mobile`}
+          aria-label={label}
+          value={value}
+          onChange={(e) => handleChoose(e.target.value)}
+          className="md:hidden absolute inset-0 z-20 w-full h-full opacity-0 cursor-pointer text-base"
+        >
+          {options.map((opt) => (
+            <option
+              key={opt.value}
+              value={opt.value}
+              className="bg-[var(--bg-surface)] text-[var(--text-primary)]"
+            >
+              {opt.label}
+            </option>
+          ))}
+        </select>
+
+        {/* TABLET & DESKTOP (>= 768px): Custom accessible dropdown button + animated listbox */}
+        <button
+          ref={triggerRef}
+          id={id}
+          type="button"
+          aria-label={`${label}: ${displayValue}`}
+          aria-haspopup="listbox"
+          aria-expanded={isOpen}
+          aria-controls={listboxId}
+          onClick={onToggleOpen}
+          onKeyDown={handleDesktopKeyDown}
+          className="hidden md:block absolute inset-0 z-20 w-full h-full rounded-[14px] bg-transparent cursor-pointer"
+        />
+      </div>
+
+      {/* Custom Dropdown List (Tablet & Desktop >= 768px): soft fade + 8px slide */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            id={listboxId}
+            role="listbox"
+            aria-label={label}
+            initial={prefersReduced ? { opacity: 0 } : { opacity: 0, y: -8 }}
+            animate={prefersReduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
+            exit={prefersReduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
+            transition={{
+              duration: prefersReduced ? 0.01 : 0.22,
+              ease: EASE_OUT,
+            }}
+            className={`hidden md:block absolute top-[calc(100%+10px)] z-40 rounded-2xl border border-[#B08D57]/40 dark:border-[#DEC085]/35 bg-[var(--bg-surface)] shadow-[0_22px_50px_-14px_rgba(28,26,23,0.22)] dark:shadow-[0_24px_56px_-14px_rgba(0,0,0,0.68)] py-1.5 max-h-[280px] overflow-y-auto ${
+              alignPopoverRight
+                ? 'right-0 min-w-[240px]'
+                : 'left-0 right-0 min-w-[215px]'
+            }`}
+          >
+            {options.map((opt, idx) => {
+              const isSelected = opt.value === value;
+              const isHighlighted = idx === highlightedIndex;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onMouseEnter={() => setHighlightedIndex(idx)}
+                  onClick={() => {
+                    handleChoose(opt.value);
+                    onClose();
+                    triggerRef.current?.focus();
+                  }}
+                  className={`w-full min-h-[44px] px-3.5 py-2 text-left flex items-center justify-between gap-2.5 text-sm transition-colors duration-150 ease-out motion-reduce:transition-none cursor-pointer ${
+                    isSelected
+                      ? 'bg-[var(--bg-surface-muted)] text-[var(--accent-primary)] font-semibold'
+                      : isHighlighted
+                      ? 'bg-[var(--bg-secondary)] text-[var(--text-primary)] font-medium'
+                      : 'text-[var(--text-primary)] hover:bg-[var(--bg-secondary)] font-normal'
+                  } ${tabular ? 'tabular-nums' : ''}`}
+                >
+                  <span className="truncate">{opt.label}</span>
+                  {isSelected && (
+                    <Check
+                      className="w-4 h-4 shrink-0 text-[var(--accent-primary)]"
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+};
+
+export const SmartSearchBlock: React.FC<SmartSearchBlockProps> = ({
+  searchState,
+  onChangeState,
+  onSearchSubmit,
+  serviceLocations,
+  propertyTypes,
+  prefersReduced,
+  isSubmitting = false,
+  isLandscapeCompact = false,
+}) => {
+  const [openMenu, setOpenMenu] = useState<'location' | 'type' | 'budget' | null>(
+    null
+  );
 
   const handleToggleListing = (mode: 'Buy' | 'Rent') => {
     onChangeState((prev) => ({
@@ -125,837 +370,212 @@ export const SmartSearchBlock: React.FC<SmartSearchBlockProps> = ({
     }));
   };
 
-  const handleToggleQuickChip = (
-    chip: (typeof QUICK_FILTER_CHIPS)[number]
-  ) => {
-    onChangeState((prev) => {
-      if (chip.kind === 'propertyType') {
-        return {
-          ...prev,
-          propertyType: prev.propertyType === chip.value ? 'All' : chip.value,
-        };
-      }
-      return {
-        ...prev,
-        budgetIdx: prev.budgetIdx === chip.value ? 0 : chip.value,
-      };
-    });
-  };
+  const locationOptions: DropdownOption[] = [
+    { value: 'All', label: 'All locations' },
+    ...serviceLocations.map((loc) => ({ value: loc, label: loc })),
+  ];
 
-  const handleSelectSuggestion = (suggestion: SearchSuggestion) => {
-    const nextState: SmartSearchState = {
-      ...searchState,
-      query: suggestion.label,
-    };
-    onChangeState(nextState);
-    setDropdownTarget(null);
-    setHighlightedIdx(-1);
-    onSearchSubmit(nextState);
-  };
+  const typeOptions: DropdownOption[] = [
+    { value: 'All', label: 'All types' },
+    ...propertyTypes.map((type) => ({ value: type, label: type })),
+  ];
 
-  const handleRemoveChip = (key: ActiveFilterChipKey) => {
-    onChangeState((prev) => {
-      switch (key) {
-        case 'query':
-          return { ...prev, query: '' };
-        case 'listing':
-          return { ...prev, listing: 'All' };
-        case 'location':
-          return { ...prev, location: 'All' };
-        case 'propertyType':
-          return { ...prev, propertyType: 'All' };
-        case 'budget':
-          return { ...prev, budgetIdx: 0 };
-        default:
-          return prev;
-      }
-    });
-  };
+  const budgetOptions: DropdownOption[] = SMART_BUDGET_RANGES.map((b, idx) => ({
+    value: String(idx),
+    label: b.label,
+  }));
 
-  const handleInputChange = (
-    value: string,
-    target: 'mobile' | 'desktop'
-  ) => {
-    onChangeState((prev) => ({ ...prev, query: value }));
-    setHighlightedIdx(-1);
-    setDropdownTarget(value.trim().length > 0 ? target : null);
-  };
+  const currentLocationLabel =
+    searchState.location === 'All' ? 'All locations' : searchState.location;
+  const currentTypeLabel =
+    searchState.propertyType === 'All' ? 'All types' : searchState.propertyType;
+  const currentBudgetLabel =
+    SMART_BUDGET_RANGES[searchState.budgetIdx]?.label || 'Any budget';
 
-  const handleInputKeyDown = (
-    e: React.KeyboardEvent<HTMLInputElement>,
-    isDropdownVisible: boolean
-  ) => {
-    if (e.key === 'Escape') {
-      setDropdownTarget(null);
-      setHighlightedIdx(-1);
-      return;
-    }
-    if (isDropdownVisible && suggestions.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setHighlightedIdx((prev) =>
-          prev < suggestions.length - 1 ? prev + 1 : 0
-        );
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setHighlightedIdx((prev) =>
-          prev > 0 ? prev - 1 : suggestions.length - 1
-        );
-        return;
-      }
-      if (
-        e.key === 'Enter' &&
-        highlightedIdx >= 0 &&
-        suggestions[highlightedIdx]
-      ) {
-        e.preventDefault();
-        handleSelectSuggestion(suggestions[highlightedIdx]);
-        return;
-      }
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      setDropdownTarget(null);
-      setHighlightedIdx(-1);
-      onSearchSubmit();
-    }
-  };
-
-  // Swipe-down gesture handlers for bottom sheet (supports both touch & pointer drag)
-  const handlePointerDownSheet = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement)?.closest('button')) return;
-    if (e.button !== 0 && e.pointerType === 'mouse') return;
-    swipeStartYRef.current = e.clientY;
-    swipeStartTimeRef.current = Date.now();
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // Ignore if pointer capture is unavailable in synthetic test environments
-    }
-  };
-
-  const handlePointerMoveSheet = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (swipeStartYRef.current === null) return;
-    const delta = e.clientY - swipeStartYRef.current;
-    if (delta > 0) {
-      setSheetDragY(prefersReduced ? 0 : Math.min(delta, 220));
-    } else {
-      setSheetDragY(0);
-    }
-  };
-
-  const handlePointerEndSheet = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (swipeStartYRef.current === null) return;
-    const delta = e.clientY - swipeStartYRef.current;
-    const elapsed = Math.max(1, Date.now() - swipeStartTimeRef.current);
-    const velocity = delta / elapsed; // px per ms
-    swipeStartYRef.current = null;
-    try {
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      }
-    } catch {
-      // Ignore
-    }
-    if (delta > 64 || (delta > 24 && velocity > 0.4)) {
-      setSheetOpen(false);
-    }
-    setSheetDragY(0);
-  };
-
-  const renderSuggestionsDropdown = (listboxId: string, isVisible: boolean) => {
-    if (!isVisible) return null;
-    return (
-      <div
-        id={listboxId}
-        role="listbox"
-        aria-label="Search suggestions"
-        data-testid="search-suggestions-dropdown"
-        className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-surface)] shadow-[0_12px_28px_-8px_rgba(28,26,23,0.18)] dark:shadow-[0_14px_34px_-8px_rgba(0,0,0,0.52)] max-h-[264px] overflow-y-auto"
-      >
-        {suggestions.length === 0 ? (
-          <div
-            role="status"
-            className="px-3.5 py-3 text-sm font-medium text-[var(--text-secondary)]"
-          >
-            No match. Try another locality.
-          </div>
-        ) : (
-          suggestions.map((item, idx) => {
-            const isHighlighted = idx === highlightedIdx;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="option"
-                aria-selected={isHighlighted}
-                onMouseDown={(e) => {
-                  // Prevent input blur before selection fires
-                  e.preventDefault();
-                }}
-                onClick={() => handleSelectSuggestion(item)}
-                className={`w-full min-h-[44px] px-3.5 py-2 text-left flex items-center gap-2.5 border-b last:border-b-0 border-[var(--border-hairline)] transition-colors motion-reduce:transition-none cursor-pointer ${
-                  isHighlighted
-                    ? 'bg-[var(--bg-secondary)]'
-                    : 'hover:bg-[var(--bg-secondary)]'
-                }`}
-              >
-                {item.kind === 'location' ? (
-                  <MapPin
-                    className="w-4 h-4 shrink-0 text-[var(--accent-primary)]"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Building2
-                    className="w-4 h-4 shrink-0 text-[var(--accent-primary)]"
-                    aria-hidden="true"
-                  />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-[var(--text-primary)] truncate">
-                    {item.label}
-                  </div>
-                  <div className="text-xs text-[var(--text-muted)] truncate">
-                    {item.subtitle}
-                  </div>
-                </div>
-              </button>
-            );
-          })
-        )}
-      </div>
-    );
-  };
+  // Overlap bottom edge of hero (~half height on desktop, balanced overlap on tablet/mobile/landscape)
+  const overlapSpacingClass = isLandscapeCompact
+    ? '-mt-3 pb-3'
+    : '-mt-4 sm:-mt-5 md:-mt-7 lg:-mt-9 min-[1025px]:-mt-10 pb-3 md:pb-5';
 
   return (
-    <motion.section
+    <section
       id="search"
       aria-label="Property search"
-      initial={prefersReduced ? false : { opacity: 0, y: 12 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.15 }}
-      transition={{ duration: 0.45, ease: LUX_EASE }}
-      className="fluid-container relative z-20 pt-3 pb-2 md:pt-7 md:pb-3 scroll-mt-24"
+      className={`fluid-container relative z-20 ${overlapSpacingClass} scroll-mt-24`}
     >
       <h2 className="sr-only">Search properties</h2>
 
-      {/* ─── PHONES (< 768px): ONE COMPACT ~150px CARD ────────────────────── */}
-      <div
-        ref={mobileCardRef}
-        data-testid="mobile-smart-search-card"
-        className="md:hidden relative rounded-[12px] bg-[var(--bg-surface)] border border-[var(--border-input)] shadow-[0_4px_16px_-6px_rgba(28,26,23,0.08)] dark:shadow-[0_6px_20px_-6px_rgba(0,0,0,0.34)] p-[6px]"
-      >
-        {/* Row 1: Buy | Rent switch (44px high) */}
-        <div
-          role="group"
-          aria-label="Buy or rent"
-          className="h-[44px] grid grid-cols-2 p-[3px] rounded-[12px] border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-        >
-          <button
-            type="button"
-            aria-pressed={searchState.listing === 'Buy'}
-            onClick={() => handleToggleListing('Buy')}
-            className={`tap-press h-full rounded-[9px] text-sm font-semibold inline-flex items-center justify-center transition-colors motion-reduce:transition-none cursor-pointer ${
-              searchState.listing === 'Buy'
-                ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-ink)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            Buy
-          </button>
-          <button
-            type="button"
-            aria-pressed={searchState.listing === 'Rent'}
-            onClick={() => handleToggleListing('Rent')}
-            className={`tap-press h-full rounded-[9px] text-sm font-semibold inline-flex items-center justify-center transition-colors motion-reduce:transition-none cursor-pointer ${
-              searchState.listing === 'Rent'
-                ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-ink)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            Rent
-          </button>
-        </div>
-
-        {/* Row 2: Search input (52px high, 12px radius, 16px text) + Filters button */}
-        <div className="relative mt-[5px] flex items-center gap-1.5">
-          <div className="relative flex-1 min-w-0">
-            <Search
-              aria-hidden="true"
-              className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-            />
-            <input
-              id="mobile-smart-search-input"
-              type="search"
-              enterKeyHint="search"
-              autoComplete="off"
-              role="combobox"
-              aria-expanded={showMobileDropdown}
-              aria-controls={mobileListboxId}
-              aria-autocomplete="list"
-              aria-label="Search locality or property"
-              value={searchState.query}
-              onFocus={() => {
-                if (hasQueryText) {
-                  setDropdownTarget('mobile');
-                }
-              }}
-              onChange={(e) => handleInputChange(e.target.value, 'mobile')}
-              onKeyDown={(e) => handleInputKeyDown(e, showMobileDropdown)}
-              placeholder="Search locality or property"
-              className="w-full h-[52px] pl-9 pr-8 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base font-medium text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:border-[var(--accent-primary)] transition-colors motion-reduce:transition-none"
-            />
-            {searchState.query && (
-              <button
-                type="button"
-                aria-label="Clear search text"
-                onClick={() => {
-                  onChangeState((prev) => ({ ...prev, query: '' }));
-                  setDropdownTarget(null);
-                }}
-                className="tap-press absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 inline-flex items-center justify-center rounded-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-
-          <button
-            type="button"
-            data-testid="mobile-smart-search-trigger"
-            aria-label="Filters"
-            aria-haspopup="dialog"
-            aria-expanded={sheetOpen}
-            onClick={() => {
-              setDropdownTarget(null);
-              setSheetOpen(true);
-            }}
-            className={`tap-press relative h-[52px] shrink-0 px-3 rounded-[12px] border inline-flex items-center justify-center gap-1.5 transition-colors motion-reduce:transition-none cursor-pointer ${
-              activeChips.length > 0
-                ? 'border-[var(--accent-primary)] bg-[var(--bg-secondary)] text-[var(--text-primary)]'
-                : 'border-[var(--border-input)] bg-[var(--bg-canvas)] hover:bg-[var(--bg-secondary)] text-[var(--text-primary)]'
-            }`}
-          >
-            <SlidersHorizontal
-              className="w-4 h-4 shrink-0 text-[var(--accent-primary)]"
-              aria-hidden="true"
-            />
-            <span className="hidden min-[390px]:inline text-sm font-medium">
-              Filters
-            </span>
-            {activeChips.length > 0 && (
-              <span
-                aria-hidden="true"
-                className="min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--accent-primary)] text-[var(--accent-primary-ink)] text-[11px] font-semibold inline-flex items-center justify-center tabular-nums"
-              >
-                {activeChips.length}
-              </span>
-            )}
-          </button>
-
-          {renderSuggestionsDropdown(mobileListboxId, showMobileDropdown)}
-        </div>
-
-        {/* Row 3: Horizontally scrollable quick filter chips */}
-        <div
-          role="group"
-          aria-label="Quick property filters"
-          className="mt-[5px] flex items-center gap-1.5 overflow-x-auto no-scrollbar"
-        >
-          {QUICK_FILTER_CHIPS.map((chip) => {
-            const isSelected =
-              chip.kind === 'propertyType'
-                ? searchState.propertyType === chip.value
-                : searchState.budgetIdx === chip.value;
-            return (
-              <button
-                key={chip.id}
-                type="button"
-                aria-pressed={isSelected}
-                onClick={() => handleToggleQuickChip(chip)}
-                className={`tap-press h-[30px] px-2.5 rounded-[12px] border text-[13px] font-medium whitespace-nowrap shrink-0 inline-flex items-center justify-center transition-colors motion-reduce:transition-none cursor-pointer ${
-                  isSelected
-                    ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-ink)] border-[var(--accent-primary)] font-semibold'
-                    : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)] border-[var(--border-hairline)] hover:border-[var(--border-input)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                {chip.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ─── TABLETS & DESKTOPS (>= 768px): ONE ALIGNED 48px ROW CARD ──────── */}
-      <form
-        ref={desktopCardRef}
-        data-testid="desktop-smart-search-card"
+      <motion.form
+        data-testid="home-search-card"
         onSubmit={(e) => {
           e.preventDefault();
-          setDropdownTarget(null);
+          setOpenMenu(null);
           onSearchSubmit();
         }}
-        className="hidden md:flex items-center gap-1.5 lg:gap-2 rounded-[12px] bg-[var(--bg-surface)] border border-[var(--border-input)] shadow-[0_4px_18px_-6px_rgba(28,26,23,0.08)] dark:shadow-[0_6px_22px_-6px_rgba(0,0,0,0.34)] p-2"
+        initial={prefersReduced ? false : { opacity: 0, y: 24 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.15 }}
+        transition={{
+          duration: prefersReduced ? 0.01 : 0.5,
+          ease: EASE_OUT,
+        }}
+        className="w-full max-w-[1100px] mx-auto rounded-[22px] md:rounded-[26px] min-[1025px]:rounded-[28px] bg-[var(--bg-surface)] border border-[#B08D57]/45 dark:border-[#DEC085]/35 shadow-[0_22px_54px_-18px_rgba(28,26,23,0.16)] dark:shadow-[0_26px_62px_-18px_rgba(0,0,0,0.62)] p-2.5 sm:p-3 md:px-4 md:py-3.5 min-[1025px]:px-3.5 min-[1025px]:py-2.5"
       >
-        {/* 1. Buy | Rent switch (48px) */}
-        <div
-          role="group"
-          aria-label="Buy or rent"
-          className="h-12 w-[104px] lg:w-[118px] shrink-0 grid grid-cols-2 p-[3px] rounded-[12px] border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-        >
-          <button
-            type="button"
-            aria-pressed={searchState.listing === 'Buy'}
-            onClick={() => handleToggleListing('Buy')}
-            className={`tap-press h-full rounded-[9px] text-sm font-semibold inline-flex items-center justify-center transition-colors motion-reduce:transition-none cursor-pointer ${
-              searchState.listing === 'Buy'
-                ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-ink)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            Buy
-          </button>
-          <button
-            type="button"
-            aria-pressed={searchState.listing === 'Rent'}
-            onClick={() => handleToggleListing('Rent')}
-            className={`tap-press h-full rounded-[9px] text-sm font-semibold inline-flex items-center justify-center transition-colors motion-reduce:transition-none cursor-pointer ${
-              searchState.listing === 'Rent'
-                ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-ink)]'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            Rent
-          </button>
-        </div>
-
-        {/* 2. Search input with live suggestions dropdown (48px) */}
-        <div className="relative flex-[1.45] min-w-[150px]">
-          <Search
-            aria-hidden="true"
-            className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-          />
-          <input
-            id="desktop-smart-search-input"
-            type="search"
-            enterKeyHint="search"
-            autoComplete="off"
-            role="combobox"
-            aria-expanded={showDesktopDropdown}
-            aria-controls={desktopListboxId}
-            aria-autocomplete="list"
-            aria-label="Search locality or property"
-            value={searchState.query}
-            onFocus={() => {
-              if (hasQueryText) {
-                setDropdownTarget('desktop');
-              }
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:gap-x-0 md:gap-y-2.5 min-[1025px]:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] min-[1025px]:gap-0 items-center">
+          {/* 1. Buy / Rent Toggle */}
+          <motion.div
+            initial={prefersReduced ? false : { opacity: 0, y: 12 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, amount: 0.15 }}
+            transition={{
+              duration: prefersReduced ? 0.01 : 0.34,
+              delay: prefersReduced ? 0 : 0.08,
+              ease: EASE_OUT,
             }}
-            onChange={(e) => handleInputChange(e.target.value, 'desktop')}
-            onKeyDown={(e) => handleInputKeyDown(e, showDesktopDropdown)}
-            placeholder="Search locality or property"
-            className="w-full h-12 pl-9 pr-8 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base font-medium text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:border-[var(--accent-primary)] transition-colors motion-reduce:transition-none"
-          />
-          {searchState.query && (
-            <button
-              type="button"
-              aria-label="Clear search text"
-              onClick={() => {
-                onChangeState((prev) => ({ ...prev, query: '' }));
-                setDropdownTarget(null);
-              }}
-              className="tap-press absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 inline-flex items-center justify-center rounded-[10px] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+            className="col-span-2 md:col-span-4 md:justify-self-start min-[1025px]:col-span-1 min-[1025px]:justify-self-auto min-w-0"
+          >
+            <div
+              role="group"
+              aria-label="Buy or Rent"
+              className="relative grid grid-cols-2 p-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-canvas)] w-full md:w-[158px] min-[1025px]:w-[152px] min-h-[52px] md:min-h-[48px] min-[1025px]:min-h-[54px]"
             >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-          {renderSuggestionsDropdown(desktopListboxId, showDesktopDropdown)}
-        </div>
-
-        {/* 3. Location dropdown (48px) */}
-        <div className="relative flex-1 min-w-[100px] max-w-[160px]">
-          <select
-            id="search-location"
-            aria-label="Location"
-            value={searchState.location}
-            onChange={(e) =>
-              onChangeState((prev) => ({ ...prev, location: e.target.value }))
-            }
-            className="w-full h-12 pl-3 pr-7 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base font-medium text-[var(--text-primary)] appearance-none cursor-pointer truncate focus:border-[var(--accent-primary)] transition-colors motion-reduce:transition-none"
-          >
-            <option value="All" className="bg-[var(--bg-surface)]">
-              Location
-            </option>
-            {serviceLocations.map((loc) => (
-              <option
-                key={loc}
-                value={loc}
-                className="bg-[var(--bg-surface)]"
-              >
-                {loc}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            aria-hidden="true"
-            className="w-4 h-4 text-[var(--text-muted)] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-          />
-        </div>
-
-        {/* 4. Type dropdown (48px) */}
-        <div className="relative flex-1 min-w-[96px] max-w-[165px]">
-          <select
-            id="search-type"
-            aria-label="Property type"
-            value={searchState.propertyType}
-            onChange={(e) =>
-              onChangeState((prev) => ({
-                ...prev,
-                propertyType: e.target.value,
-              }))
-            }
-            className="w-full h-12 pl-3 pr-7 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base font-medium text-[var(--text-primary)] appearance-none cursor-pointer truncate focus:border-[var(--accent-primary)] transition-colors motion-reduce:transition-none"
-          >
-            <option value="All" className="bg-[var(--bg-surface)]">
-              Type
-            </option>
-            {propertyTypes.map((t) => (
-              <option
-                key={t}
-                value={t}
-                className="bg-[var(--bg-surface)]"
-              >
-                {t}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            aria-hidden="true"
-            className="w-4 h-4 text-[var(--text-muted)] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-          />
-        </div>
-
-        {/* 5. Budget dropdown (48px) */}
-        <div className="relative flex-1 min-w-[100px] max-w-[170px]">
-          <select
-            id="search-budget"
-            aria-label="Budget range"
-            value={searchState.budgetIdx}
-            onChange={(e) =>
-              onChangeState((prev) => ({
-                ...prev,
-                budgetIdx: Number(e.target.value),
-              }))
-            }
-            className="w-full h-12 pl-3 pr-7 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base font-medium text-[var(--text-primary)] tabular-nums appearance-none cursor-pointer truncate focus:border-[var(--accent-primary)] transition-colors motion-reduce:transition-none"
-          >
-            {SMART_BUDGET_RANGES.map((b, idx) => (
-              <option
-                key={b.label}
-                value={idx}
-                className="bg-[var(--bg-surface)]"
-              >
-                {idx === 0 ? 'Budget' : b.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            aria-hidden="true"
-            className="w-4 h-4 text-[var(--text-muted)] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-          />
-        </div>
-
-        {/* 6. Search button (48px, solid colour, no gradient) */}
-        <button
-          type="submit"
-          className="tap-press h-12 px-4 lg:px-5 shrink-0 rounded-[12px] bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 text-sm font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap transition-colors motion-reduce:transition-none cursor-pointer"
-        >
-          <Search className="w-4 h-4 shrink-0" aria-hidden="true" />
-          <span>Search</span>
-        </button>
-      </form>
-
-      {/* ─── ACTIVE FILTERS REMOVABLE CHIPS UNDER SEARCH CARD ─────────────── */}
-      {activeChips.length > 0 && (
-        <div
-          data-testid="active-filter-chips"
-          aria-label="Active filters"
-          className="mt-2.5 flex flex-wrap items-center gap-1.5"
-        >
-          {activeChips.map((chip) => (
-            <button
-              key={chip.key}
-              type="button"
-              onClick={() => handleRemoveChip(chip.key)}
-              aria-label={`Remove ${chip.label} filter`}
-              className="tap-press min-h-[32px] px-2.5 py-1 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-surface)] hover:bg-[var(--bg-secondary)] text-xs font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 transition-colors motion-reduce:transition-none cursor-pointer"
-            >
-              <span>{chip.label}</span>
-              <X
-                className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0"
+              {/* Smooth sliding gold pill (transform & opacity only) */}
+              <span
                 aria-hidden="true"
+                style={{
+                  transform:
+                    searchState.listing === 'Rent'
+                      ? 'translate3d(100%, 0, 0)'
+                      : 'translate3d(0%, 0, 0)',
+                  opacity: searchState.listing === 'All' ? 0 : 1,
+                }}
+                className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full bg-[var(--cta-gold-bg)] shadow-[0_2px_8px_-2px_rgba(28,26,23,0.18)] transition-[transform,opacity] duration-250 ease-out motion-reduce:transition-none"
               />
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={onClearAll}
-            className="tap-press min-h-[32px] px-2 text-xs font-semibold text-[var(--accent-primary)] hover:underline cursor-pointer"
-          >
-            Clear all
-          </button>
-        </div>
-      )}
 
-      {/* ─── PHONE FILTERS BOTTOM SHEET (max-h 90dvh, portaled above fixed header) */}
-      {typeof document !== 'undefined' &&
-        createPortal(
-          <AnimatePresence>
-            {sheetOpen && (
-              <motion.div
-                key="mobile-filters-sheet-backdrop"
-                onClick={() => setSheetOpen(false)}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: prefersReduced ? 0.01 : 0.18, ease: LUX_EASE }}
-                role="dialog"
-                aria-modal="true"
-                aria-label="Property filters"
-                className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 backdrop-blur-xs"
+              <button
+                type="button"
+                aria-pressed={searchState.listing === 'Buy'}
+                onClick={() => handleToggleListing('Buy')}
+                className={`relative z-10 min-h-[42px] rounded-full text-sm inline-flex items-center justify-center whitespace-nowrap transition-colors duration-200 ease-out motion-reduce:transition-none cursor-pointer ${
+                  searchState.listing === 'Buy'
+                    ? 'text-[var(--cta-gold-ink)] font-semibold'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-medium'
+                }`}
               >
-                <motion.div
-                  key="mobile-filters-sheet-panel"
-                  data-testid="mobile-filters-bottom-sheet"
-                  onClick={(e) => e.stopPropagation()}
-                  style={
-                    sheetDragY > 0 && !prefersReduced
-                      ? { transform: `translateY(${sheetDragY}px)` }
-                      : undefined
-                  }
-                  initial={prefersReduced ? { opacity: 0 } : { opacity: 0, y: 32 }}
-                  animate={prefersReduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
-                  exit={prefersReduced ? { opacity: 0 } : { opacity: 0, y: 24 }}
-                  transition={{ duration: prefersReduced ? 0.01 : 0.22, ease: LUX_EASE }}
-                  className="w-full max-w-lg max-h-[90dvh] flex flex-col rounded-t-[16px] bg-[var(--bg-surface)] border border-b-0 border-[var(--border-hairline)] shadow-[0_-12px_36px_-10px_rgba(0,0,0,0.28)] overflow-hidden"
-                >
-                  {/* Drag Handle + Header (supports swipe-down close) */}
-                  <div
-                    data-testid="filters-sheet-drag-header"
-                    onPointerDown={handlePointerDownSheet}
-                    onPointerMove={handlePointerMoveSheet}
-                    onPointerUp={handlePointerEndSheet}
-                    onPointerCancel={handlePointerEndSheet}
-                    className="touch-none select-none px-4 pt-2.5 pb-3 border-b border-[var(--border-hairline)] shrink-0"
-                  >
-                    <div
-                      aria-hidden="true"
-                      className="mx-auto mb-2.5 h-1 w-10 rounded-full bg-[var(--border-input)]"
-                    />
-                    <div className="flex items-center justify-between gap-3">
-                      <h3 className="font-display text-xl font-medium text-[var(--text-primary)]">
-                        Filters
-                      </h3>
-                      <button
-                        type="button"
-                        onClick={() => setSheetOpen(false)}
-                        aria-label="Close filters"
-                        className="tap-press h-10 w-10 inline-flex items-center justify-center rounded-[12px] bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-primary)] cursor-pointer"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
+                Buy
+              </button>
 
-                  {/* Form Controls */}
-                  <form
-                    id="mobile-filters-sheet-form"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      setSheetOpen(false);
-                      onSearchSubmit();
-                    }}
-                    className="flex-1 overflow-y-auto px-4 py-3.5 space-y-3.5"
-                  >
-                    {/* Buy or Rent */}
-                    <div>
-                      <span className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5">
-                        Buy or Rent
-                      </span>
-                      <div
-                        role="group"
-                        aria-label="Buy or Rent"
-                        className="h-[44px] grid grid-cols-3 p-[3px] rounded-[12px] border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-                      >
-                        {(['All', 'Buy', 'Rent'] as const).map((mode) => {
-                          const selected = searchState.listing === mode;
-                          return (
-                            <button
-                              key={mode}
-                              type="button"
-                              aria-pressed={selected}
-                              onClick={() =>
-                                onChangeState((prev) => ({ ...prev, listing: mode }))
-                              }
-                              className={`tap-press h-full rounded-[9px] text-sm font-semibold transition-colors motion-reduce:transition-none cursor-pointer ${
-                                selected
-                                  ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-ink)]'
-                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                              }`}
-                            >
-                              {mode === 'All' ? 'Any' : mode}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+              <button
+                type="button"
+                aria-pressed={searchState.listing === 'Rent'}
+                onClick={() => handleToggleListing('Rent')}
+                className={`relative z-10 min-h-[42px] rounded-full text-sm inline-flex items-center justify-center whitespace-nowrap transition-colors duration-200 ease-out motion-reduce:transition-none cursor-pointer ${
+                  searchState.listing === 'Rent'
+                    ? 'text-[var(--cta-gold-ink)] font-semibold'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-medium'
+                }`}
+              >
+                Rent
+              </button>
+            </div>
+          </motion.div>
 
-                    {/* Location */}
-                    <div>
-                      <label
-                        htmlFor="sheet-search-location"
-                        className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
-                      >
-                        Location
-                      </label>
-                      <div className="relative">
-                        <select
-                          id="sheet-search-location"
-                          value={searchState.location}
-                          onChange={(e) =>
-                            onChangeState((prev) => ({
-                              ...prev,
-                              location: e.target.value,
-                            }))
-                          }
-                          className="w-full h-12 pl-3.5 pr-9 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] appearance-none focus:border-[var(--accent-primary)]"
-                        >
-                          <option value="All" className="bg-[var(--bg-surface)]">
-                            All Siliguri areas
-                          </option>
-                          {serviceLocations.map((loc) => (
-                            <option
-                              key={loc}
-                              value={loc}
-                              className="bg-[var(--bg-surface)]"
-                            >
-                              {loc}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown
-                          aria-hidden="true"
-                          className="w-4 h-4 text-[var(--text-muted)] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                        />
-                      </div>
-                    </div>
+          {/* 2. Location Dropdown */}
+          <SearchSelectField
+            id="home-search-location"
+            label="Location"
+            displayValue={currentLocationLabel}
+            value={searchState.location}
+            options={locationOptions}
+            onSelect={(next) =>
+              onChangeState((prev) => ({ ...prev, location: next }))
+            }
+            isOpen={openMenu === 'location'}
+            onToggleOpen={() =>
+              setOpenMenu((prev) => (prev === 'location' ? null : 'location'))
+            }
+            onClose={() => setOpenMenu(null)}
+            prefersReduced={prefersReduced}
+            showLeftDividerOnDesktop
+            staggerIndex={1}
+          />
 
-                    {/* Property type */}
-                    <div>
-                      <label
-                        htmlFor="sheet-search-type"
-                        className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
-                      >
-                        Property type
-                      </label>
-                      <div className="relative">
-                        <select
-                          id="sheet-search-type"
-                          value={searchState.propertyType}
-                          onChange={(e) =>
-                            onChangeState((prev) => ({
-                              ...prev,
-                              propertyType: e.target.value,
-                            }))
-                          }
-                          className="w-full h-12 pl-3.5 pr-9 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] appearance-none focus:border-[var(--accent-primary)]"
-                        >
-                          <option value="All" className="bg-[var(--bg-surface)]">
-                            All property types
-                          </option>
-                          {propertyTypes.map((t) => (
-                            <option
-                              key={t}
-                              value={t}
-                              className="bg-[var(--bg-surface)]"
-                            >
-                              {t}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown
-                          aria-hidden="true"
-                          className="w-4 h-4 text-[var(--text-muted)] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                        />
-                      </div>
-                    </div>
+          {/* 3. Type Dropdown */}
+          <SearchSelectField
+            id="home-search-type"
+            label="Type"
+            displayValue={currentTypeLabel}
+            value={searchState.propertyType}
+            options={typeOptions}
+            onSelect={(next) =>
+              onChangeState((prev) => ({ ...prev, propertyType: next }))
+            }
+            isOpen={openMenu === 'type'}
+            onToggleOpen={() =>
+              setOpenMenu((prev) => (prev === 'type' ? null : 'type'))
+            }
+            onClose={() => setOpenMenu(null)}
+            prefersReduced={prefersReduced}
+            showLeftDividerOnTablet
+            staggerIndex={2}
+          />
 
-                    {/* Budget range */}
-                    <div>
-                      <label
-                        htmlFor="sheet-search-budget"
-                        className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
-                      >
-                        Budget range
-                      </label>
-                      <div className="relative">
-                        <select
-                          id="sheet-search-budget"
-                          value={searchState.budgetIdx}
-                          onChange={(e) =>
-                            onChangeState((prev) => ({
-                              ...prev,
-                              budgetIdx: Number(e.target.value),
-                            }))
-                          }
-                          className="w-full h-12 pl-3.5 pr-9 rounded-[12px] border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] tabular-nums appearance-none focus:border-[var(--accent-primary)]"
-                        >
-                          {SMART_BUDGET_RANGES.map((b, idx) => (
-                            <option
-                              key={b.label}
-                              value={idx}
-                              className="bg-[var(--bg-surface)]"
-                            >
-                              {b.label}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown
-                          aria-hidden="true"
-                          className="w-4 h-4 text-[var(--text-muted)] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                        />
-                      </div>
-                    </div>
-                  </form>
+          {/* 4. Budget Dropdown */}
+          <SearchSelectField
+            id="home-search-budget"
+            label="Budget"
+            displayValue={currentBudgetLabel}
+            value={String(searchState.budgetIdx)}
+            options={budgetOptions}
+            onSelect={(next) =>
+              onChangeState((prev) => ({ ...prev, budgetIdx: Number(next) }))
+            }
+            isOpen={openMenu === 'budget'}
+            onToggleOpen={() =>
+              setOpenMenu((prev) => (prev === 'budget' ? null : 'budget'))
+            }
+            onClose={() => setOpenMenu(null)}
+            prefersReduced={prefersReduced}
+            showLeftDividerOnTablet
+            alignPopoverRight
+            staggerIndex={3}
+            tabular
+          />
 
-                  {/* Sticky Footer: Show results (live count) + Clear all */}
-                  <div className="px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom,0px))] border-t border-[var(--border-hairline)] bg-[var(--bg-surface)] shrink-0 space-y-2">
-                    <button
-                      type="submit"
-                      form="mobile-filters-sheet-form"
-                      data-testid="sheet-show-results-btn"
-                      className="tap-press w-full h-12 px-5 rounded-[12px] bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 text-base font-semibold inline-flex items-center justify-center gap-2 transition-colors motion-reduce:transition-none cursor-pointer"
-                    >
-                      <span>Show results ({formatPropertiesCount(liveMatchingCount)})</span>
-                    </button>
-                    <div className="text-center">
-                      <button
-                        type="button"
-                        onClick={onClearAll}
-                        className="tap-press min-h-[36px] px-3 text-sm font-medium text-[var(--accent-primary)] hover:underline cursor-pointer"
-                      >
-                        Clear all
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>,
-          document.body
-        )}
-    </motion.section>
+          {/* 5. Search Button */}
+          <motion.div
+            initial={prefersReduced ? false : { opacity: 0, y: 12 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, amount: 0.15 }}
+            transition={{
+              duration: prefersReduced ? 0.01 : 0.34,
+              delay: prefersReduced ? 0 : 0.08 + 4 * 0.07,
+              ease: EASE_OUT,
+            }}
+            className="min-w-0 md:pl-2 min-[1025px]:pl-2.5"
+          >
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              aria-label={isSubmitting ? 'Searching properties' : 'Search properties'}
+              className="group/btn w-full min-h-[52px] px-3 sm:px-4 rounded-[14px] md:w-[52px] md:h-[52px] min-[1025px]:w-[54px] min-[1025px]:h-[54px] md:px-0 md:rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 dark:border-[#F5DFB0]/40 text-sm sm:text-[15px] font-semibold inline-flex items-center justify-center gap-2 whitespace-nowrap shadow-[0_8px_22px_-8px_rgba(28,26,23,0.35)] transition-[transform,opacity,background-color] duration-200 ease-out hover:scale-[1.03] active:scale-[0.97] motion-reduce:transition-none motion-reduce:hover:scale-100 motion-reduce:active:scale-100 cursor-pointer disabled:opacity-75"
+            >
+              {isSubmitting ? (
+                <Loader2
+                  className="w-[18px] h-[18px] md:w-5 md:h-5 shrink-0 animate-spin"
+                  aria-hidden="true"
+                />
+              ) : (
+                <Search
+                  className="w-[18px] h-[18px] md:w-5 md:h-5 shrink-0 transition-transform duration-200 ease-out group-hover/btn:translate-x-[1.5px] group-hover/btn:-translate-y-[1.5px] motion-reduce:transition-none motion-reduce:group-hover/btn:translate-x-0 motion-reduce:group-hover/btn:translate-y-0"
+                  aria-hidden="true"
+                />
+              )}
+              <span className="md:hidden">Search</span>
+            </button>
+          </motion.div>
+        </div>
+      </motion.form>
+    </section>
   );
 };

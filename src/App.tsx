@@ -7,6 +7,7 @@ import { AuthModal } from './components/AuthModal';
 import { FirstVisitSignInPrompt } from './components/FirstVisitSignInPrompt';
 import { DashboardCoachmark } from './components/DashboardCoachmark';
 import { MobileFloatingActions } from './components/MobileFloatingActions';
+import { OfflineBanner } from './components/OfflineBanner';
 import { HomePage } from './pages/HomePage';
 import { PropertiesPage } from './pages/PropertiesPage';
 import { PropertyDetailPage } from './pages/PropertyDetailPage';
@@ -93,18 +94,37 @@ class AppErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center px-6 bg-[var(--bg-canvas)] text-[var(--text-primary)]">
-          <div className="max-w-md w-full rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-6 text-center space-y-4 shadow-[var(--shadow-subtle)]">
+        <div
+          className="min-h-screen flex items-center justify-center px-6 bg-[var(--bg-canvas)] text-[var(--text-primary)]"
+          style={{
+            backgroundColor: 'var(--bg-canvas, #16201B)',
+            color: 'var(--text-primary, #FAF6EE)',
+          }}
+        >
+          <div
+            className="max-w-md w-full rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-6 text-center space-y-4 shadow-[var(--shadow-subtle)]"
+            style={{
+              backgroundColor: 'var(--bg-surface, #1D2A23)',
+              borderColor: 'var(--border-hairline, rgba(255,255,255,0.14))',
+            }}
+          >
             <h1 className="font-display text-2xl font-medium">Debmalya Realty</h1>
-            <p className="text-sm text-[var(--text-secondary)]">
+            <p
+              className="text-sm text-[var(--text-secondary)]"
+              style={{ color: 'var(--text-secondary, #D3CBB8)' }}
+            >
               Something interrupted the page display. Reload to restore the website.
             </p>
             <button
               type="button"
               onClick={() => window.location.reload()}
               className="min-h-[44px] px-6 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold cursor-pointer"
+              style={{
+                backgroundColor: 'var(--cta-gold-bg, #C59B4E)',
+                color: 'var(--cta-gold-ink, #16201B)',
+              }}
             >
-              Reload page
+              Reload Page
             </button>
           </div>
         </div>
@@ -125,6 +145,7 @@ export default function App() {
           <AuthRedirectObserver />
           <div className="min-h-screen overflow-x-clip flex flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)]">
             <Navbar />
+            <OfflineBanner />
             <div className="flex-1">
               <Routes>
                 <Route path="/" element={<HomePage />} />
