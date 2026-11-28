@@ -33,6 +33,8 @@ export const Navbar: React.FC = () => {
     setNavDrawerOpen,
   } = useApp();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [desktopPropsOpen, setDesktopPropsOpen] = useState(false);
   const [propertiesExpanded, setPropertiesExpanded] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [activeSection, setActiveSection] = useState('hero');
@@ -41,7 +43,13 @@ export const Navbar: React.FC = () => {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const desktopPropsRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(false);
+
+  const [isDesktop, setIsDesktop] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true
+  );
 
   const [isLandscapeCompact, setIsLandscapeCompact] = useState<boolean>(() =>
     typeof window !== 'undefined'
@@ -51,25 +59,71 @@ export const Navbar: React.FC = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const mq = window.matchMedia('(orientation: landscape) and (max-height: 540px)');
-    const sync = () => setIsLandscapeCompact(mq.matches);
+    const mqDesktop = window.matchMedia('(min-width: 768px)');
+    const mqLandscape = window.matchMedia(
+      '(orientation: landscape) and (max-height: 540px)'
+    );
+    const sync = () => {
+      setIsDesktop(mqDesktop.matches);
+      setIsLandscapeCompact(mqLandscape.matches);
+      if (window.innerWidth >= 1024) {
+        setDrawerOpen(false);
+      }
+    };
     sync();
-    mq.addEventListener('change', sync);
+    mqDesktop.addEventListener('change', sync);
+    mqLandscape.addEventListener('change', sync);
     window.addEventListener('resize', sync);
     window.addEventListener('orientationchange', sync);
     return () => {
-      mq.removeEventListener('change', sync);
+      mqDesktop.removeEventListener('change', sync);
+      mqLandscape.removeEventListener('change', sync);
       window.removeEventListener('resize', sync);
       window.removeEventListener('orientationchange', sync);
     };
   }, []);
 
   const isHome = location.pathname === '/';
-  const overHero = isHome && !scrolled && !isLandscapeCompact;
-  const isOwnerOnPublicSite =
-    user?.role === 'owner' &&
-    !location.pathname.startsWith('/owner-dashboard') &&
-    !location.pathname.startsWith('/owner-login/dashboard');
+  const overHero = isHome && !scrolled && !isDesktop && !isLandscapeCompact;
+  const displayUserName =
+    user?.full_name?.trim() || user?.email?.split('@')[0] || 'Account';
+
+  useEffect(() => {
+    setUserMenuOpen(false);
+    setDesktopPropsOpen(false);
+  }, [location.pathname, user?.id]);
+
+  useEffect(() => {
+    if (!userMenuOpen && !desktopPropsOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (
+        userMenuOpen &&
+        userMenuRef.current &&
+        !userMenuRef.current.contains(e.target as Node)
+      ) {
+        setUserMenuOpen(false);
+      }
+      if (
+        desktopPropsOpen &&
+        desktopPropsRef.current &&
+        !desktopPropsRef.current.contains(e.target as Node)
+      ) {
+        setDesktopPropsOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setUserMenuOpen(false);
+        setDesktopPropsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [userMenuOpen, desktopPropsOpen]);
 
   useEffect(() => {
     const onScroll = () => {
@@ -205,17 +259,18 @@ export const Navbar: React.FC = () => {
   return (
     <>
       <header
-        className={`fixed top-0 inset-x-0 z-40 w-full max-w-[100vw] overflow-x-clip transition-all duration-500 ${
+        className={`fixed top-0 inset-x-0 z-40 w-full max-w-[100vw] transition-all duration-300 ${
           overHero
             ? 'bg-gradient-to-b from-[#0E1512]/50 via-[#0E1512]/15 to-transparent pt-[calc(env(safe-area-inset-top,0px)+clamp(0.625rem,1.6vw,1rem))] pb-[clamp(0.625rem,1.6vw,1rem)]'
-            : 'bg-[var(--bg-canvas)]/90 backdrop-blur-2xl shadow-[var(--shadow-subtle)] pt-[calc(env(safe-area-inset-top,0px)+0.625rem)] pb-2.5 sm:pb-3'
+            : 'bg-[var(--bg-canvas)]/92 backdrop-blur-2xl border-b border-[var(--border-hairline)] shadow-[var(--shadow-subtle)] pt-[calc(env(safe-area-inset-top,0px)+0.625rem)] pb-2.5 sm:pb-3'
         }`}
       >
-        <div className="fluid-container flex items-center justify-between gap-2">
+        <div className="fluid-container flex items-center justify-between gap-2 lg:gap-4">
           <Link
             to="/"
             onClick={() => {
               setDrawerOpen(false);
+              setDesktopPropsOpen(false);
               if (user?.role === 'owner') {
                 enterOwnerWebsiteView();
               }
@@ -226,41 +281,190 @@ export const Navbar: React.FC = () => {
             <BrandLogo onDarkOverlay={overHero} />
           </Link>
 
+          {/* Desktop Navigation Links (>= 1024px) */}
+          <nav
+            aria-label="Primary navigation"
+            className="hidden lg:flex items-center justify-center gap-0.5 xl:gap-1.5 min-w-0"
+          >
+            {navItems.map((item) => {
+              if (item.kind === 'properties') {
+                const isPropActive =
+                  location.pathname.startsWith('/properties') ||
+                  (isHome && activeSection === 'properties');
+                return (
+                  <div key="desktop-properties" ref={desktopPropsRef} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        setDesktopPropsOpen((v) => !v);
+                      }}
+                      aria-haspopup="menu"
+                      aria-expanded={desktopPropsOpen}
+                      className={`min-h-[44px] px-2.5 xl:px-3.5 rounded-full text-[13px] xl:text-sm font-medium whitespace-nowrap inline-flex items-center gap-1 transition-colors cursor-pointer ${
+                        isPropActive
+                          ? 'bg-[var(--bg-surface-muted)] text-[var(--accent-primary)] font-semibold'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-muted)]/60'
+                      }`}
+                    >
+                      <span>{item.label}</span>
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${
+                          desktopPropsOpen ? 'rotate-180' : ''
+                        }`}
+                        aria-hidden="true"
+                      />
+                    </button>
+
+                    {desktopPropsOpen && (
+                      <div
+                        role="menu"
+                        aria-label="Property categories"
+                        className="absolute left-0 mt-2 w-48 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-[var(--shadow-elevated)] p-1.5 z-50"
+                      >
+                        {[
+                          { label: 'All listings', path: '/properties' },
+                          { label: 'Buy property', path: '/properties?type=Buy' },
+                          { label: 'Rent property', path: '/properties?type=Rent' },
+                          { label: 'Sell property', section: 'contact' },
+                        ].map((sub) => (
+                          <button
+                            key={sub.label}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setDesktopPropsOpen(false);
+                              if (sub.path) {
+                                navigateToPath(sub.path);
+                              } else if (sub.section) {
+                                navigateToSection(sub.section);
+                              }
+                            }}
+                            className="w-full min-h-[44px] px-3 py-2 rounded-xl text-sm font-medium text-[var(--text-primary)] hover:bg-[var(--bg-canvas)] hover:text-[var(--accent-primary)] inline-flex items-center text-left transition-colors cursor-pointer"
+                          >
+                            {sub.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              const isActive = isHome && activeSection === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setDesktopPropsOpen(false);
+                    navigateToSection(item.id);
+                  }}
+                  className={`min-h-[44px] px-2.5 xl:px-3.5 rounded-full text-[13px] xl:text-sm font-medium whitespace-nowrap inline-flex items-center transition-colors cursor-pointer ${
+                    isActive
+                      ? 'bg-[var(--bg-surface-muted)] text-[var(--accent-primary)] font-semibold'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-muted)]/60'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+
           <div className="flex items-center gap-1 sm:gap-2.5 shrink-0">
             {user ? (
-              <Link
-                id="navbar-dashboard-btn"
-                data-dashboard-trigger="true"
-                to={user.role === 'owner' ? '/owner-dashboard' : '/my-account'}
-                onClick={() => {
-                  setDrawerOpen(false);
-                  if (user.role === 'owner') {
-                    exitOwnerWebsiteView();
-                  }
-                }}
-                aria-label="Dashboard"
-                title="Dashboard"
-                className={`h-11 w-11 inline-flex items-center justify-center rounded-full transition-all duration-200 cursor-pointer shrink-0 ${
-                  overHero
-                    ? 'bg-[#0E1512]/60 border border-white/55 text-white hover:bg-[#0E1512]/80 backdrop-blur-md'
-                    : 'bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover)]'
-                }`}
-              >
-                <LayoutDashboard
-                  className={`w-4 h-4 shrink-0 ${
-                    overHero ? 'text-[#F5DFB0]' : 'text-[var(--accent-primary)]'
+              <div ref={userMenuRef} className="relative shrink-0">
+                <button
+                  id="navbar-dashboard-btn"
+                  data-dashboard-trigger="true"
+                  type="button"
+                  onClick={() => {
+                    setDrawerOpen(false);
+                    setUserMenuOpen((prev) => !prev);
+                  }}
+                  aria-haspopup="menu"
+                  aria-expanded={userMenuOpen}
+                  aria-label={`${displayUserName} account menu`}
+                  title={displayUserName}
+                  className={`min-h-[44px] max-w-[148px] sm:max-w-[210px] px-2.5 sm:px-3.5 inline-flex items-center justify-center gap-1.5 rounded-full transition-all duration-200 cursor-pointer shrink-0 ${
+                    overHero
+                      ? 'bg-[#0E1512]/60 border border-white/55 text-white hover:bg-[#0E1512]/80 backdrop-blur-md'
+                      : 'bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover)]'
                   }`}
-                />
-              </Link>
+                >
+                  <User
+                    className={`w-4 h-4 shrink-0 ${
+                      overHero ? 'text-[#F5DFB0]' : 'text-[var(--accent-primary)]'
+                    }`}
+                  />
+                  <span className="text-[13px] font-medium truncate">
+                    {displayUserName}
+                  </span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${
+                      userMenuOpen ? 'rotate-180' : ''
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
+
+                {userMenuOpen && (
+                  <div
+                    role="menu"
+                    aria-label="Account options"
+                    className="absolute right-0 mt-2 w-48 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-[var(--shadow-elevated)] p-1.5 z-50"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        setDrawerOpen(false);
+                        if (user.role === 'owner') {
+                          exitOwnerWebsiteView();
+                          navigate('/owner-dashboard');
+                        } else {
+                          navigate('/my-account');
+                        }
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl text-sm font-medium text-[var(--text-primary)] hover:bg-[var(--bg-canvas)] hover:text-[var(--accent-primary)] inline-flex items-center gap-2.5 cursor-pointer transition-colors text-left"
+                    >
+                      <LayoutDashboard className="w-4 h-4 text-[var(--accent-primary)] shrink-0" />
+                      <span>My dashboard</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={async () => {
+                        setUserMenuOpen(false);
+                        setDrawerOpen(false);
+                        await logout();
+                        if (
+                          location.pathname.startsWith('/my-account') ||
+                          location.pathname.startsWith('/owner-dashboard')
+                        ) {
+                          navigate('/', { replace: true });
+                        }
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-canvas)] hover:text-rose-500 inline-flex items-center gap-2.5 cursor-pointer transition-colors text-left"
+                    >
+                      <LogOut className="w-4 h-4 shrink-0" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <button
                 type="button"
                 onClick={() => {
                   setDrawerOpen(false);
-                  openAuthModal('register');
+                  openAuthModal('login');
                 }}
-                aria-label="Create account or log in"
-                title="Create account or log in"
+                aria-label="Sign in or create account"
+                title="Sign in or create account"
                 className={`min-h-[44px] min-w-[44px] px-0 min-[420px]:px-3.5 inline-flex items-center justify-center gap-1.5 rounded-full transition-all duration-200 cursor-pointer shrink-0 whitespace-nowrap ${
                   overHero
                     ? 'bg-[#0E1512]/60 border border-white/55 text-white hover:bg-[#0E1512]/80 backdrop-blur-md'
@@ -311,7 +515,7 @@ export const Navbar: React.FC = () => {
               title="Menu"
               aria-expanded={drawerOpen}
               aria-controls="universal-nav-drawer"
-              className={`min-h-[44px] min-w-[44px] px-0 min-[420px]:px-3.5 inline-flex items-center justify-center gap-2 rounded-full transition-all duration-200 cursor-pointer shrink-0 whitespace-nowrap ${
+              className={`lg:hidden min-h-[44px] min-w-[44px] px-0 min-[420px]:px-3.5 inline-flex items-center justify-center gap-2 rounded-full transition-all duration-200 cursor-pointer shrink-0 whitespace-nowrap ${
                 overHero
                   ? 'bg-[#0E1512]/60 border border-white/60 text-white hover:bg-[#0E1512]/80 backdrop-blur-md'
                   : 'bg-[var(--btn-secondary-bg)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:bg-[var(--btn-secondary-hover)]'
@@ -523,46 +727,60 @@ export const Navbar: React.FC = () => {
           >
             <div className="pt-2 border-t lg:border-t-0 border-[var(--border-hairline)]">
               {user ? (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (user.role === 'owner') {
-                        exitOwnerWebsiteView();
-                        navigateToPath('/owner-dashboard');
-                      } else {
-                        navigateToPath('/my-account');
-                      }
-                    }}
-                    className="min-h-[44px] inline-flex items-center gap-2 text-base font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] cursor-pointer"
-                  >
-                    <LayoutDashboard className="w-4 h-4 text-[var(--accent-primary)]" />
-                    <span>Dashboard</span>
-                  </button>
+                <div className="space-y-3">
+                  <p className="text-sm text-[var(--text-secondary)]">
+                    Signed in as{' '}
+                    <span className="font-semibold text-[var(--text-primary)]">
+                      {displayUserName}
+                    </span>
+                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (user.role === 'owner') {
+                          exitOwnerWebsiteView();
+                          navigateToPath('/owner-dashboard');
+                        } else {
+                          navigateToPath('/my-account');
+                        }
+                      }}
+                      className="min-h-[44px] inline-flex items-center gap-2 text-base font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] cursor-pointer"
+                    >
+                      <LayoutDashboard className="w-4 h-4 text-[var(--accent-primary)]" />
+                      <span>My dashboard</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      setDrawerOpen(false);
-                      await logout();
-                    }}
-                    className="min-h-[44px] px-4 rounded-full border border-[var(--border-hairline)] hover:border-rose-500/50 text-[13px] font-medium text-[var(--text-secondary)] hover:text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Sign out</span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setDrawerOpen(false);
+                        await logout();
+                        if (
+                          location.pathname.startsWith('/my-account') ||
+                          location.pathname.startsWith('/owner-dashboard')
+                        ) {
+                          navigate('/', { replace: true });
+                        }
+                      }}
+                      className="min-h-[44px] px-4 rounded-full border border-[var(--border-hairline)] hover:border-rose-500/50 text-[13px] font-medium text-[var(--text-secondary)] hover:text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={() => {
                     setDrawerOpen(false);
-                    openAuthModal('register');
+                    openAuthModal('login');
                   }}
                   className="min-h-[44px] inline-flex items-center gap-2 text-base font-medium text-[var(--text-primary)] hover:text-[var(--accent-primary)] cursor-pointer"
                 >
                   <User className="w-4 h-4 text-[var(--accent-primary)]" />
-                  <span>Create account / Log in</span>
+                  <span>Sign in / Create account</span>
                 </button>
               )}
             </div>

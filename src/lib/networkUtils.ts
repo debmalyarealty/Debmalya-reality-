@@ -52,16 +52,100 @@ export function toUserFriendlyNetworkError(err: unknown, fallback: string): Erro
   return new Error(fallback);
 }
 
+function parseNumericStatus(raw: unknown): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string' && /^\d{3}$/.test(raw.trim())) {
+    return Number(raw.trim());
+  }
+  return 0;
+}
+
+export function extractHttpAuthError(
+  err: unknown
+): { status: 401 | 403; message: string } | null {
+  if (!err || typeof err !== 'object') return null;
+  const errObj = err as {
+    status?: unknown;
+    statusCode?: unknown;
+    code?: unknown;
+    message?: unknown;
+    error_description?: unknown;
+  };
+  const status =
+    parseNumericStatus(errObj.status) || parseNumericStatus(errObj.statusCode);
+  const code = String(errObj.code || '').toUpperCase();
+  const rawMessage =
+    typeof errObj.message === 'string' && errObj.message.trim()
+      ? errObj.message.trim()
+      : typeof errObj.error_description === 'string' &&
+        errObj.error_description.trim()
+      ? errObj.error_description.trim()
+      : '';
+
+  if (status === 401 || code === 'PGRST301' || code === 'PGRST302' || code === 'PGRST303') {
+    return {
+      status: 401,
+      message: rawMessage || 'Your session expired. Please sign in again.',
+    };
+  }
+  if (status === 403) {
+    return {
+      status: 403,
+      message: rawMessage || 'Only the owner account can do this.',
+    };
+  }
+  return null;
+}
+
+export function toSupabaseActionError(
+  err: unknown,
+  fallback: string,
+  formatFallback?: (rawMessage: unknown, fb: string) => string
+): Error {
+  if (isBrowserOffline() || isNetworkFailureError(err)) {
+    return new Error(OFFLINE_ERROR_MESSAGE);
+  }
+  const authErr = extractHttpAuthError(err);
+  if (authErr) {
+    if (authErr.status === 401) {
+      notifySessionExpired(authErr.message);
+    }
+    return Object.assign(new Error(authErr.message), { status: authErr.status });
+  }
+  const rawMessage =
+    err instanceof Error
+      ? err.message
+      : (err as { message?: unknown } | null)?.message;
+  if (formatFallback) {
+    return new Error(formatFallback(rawMessage, fallback));
+  }
+  return toUserFriendlyNetworkError(err, fallback);
+}
+
 export function isRetryableTransientError(err: unknown): boolean {
   if (isBrowserOffline()) return false;
   if (!err) return false;
-  const errObj = err as { status?: unknown; code?: unknown; message?: unknown };
-  const status = typeof errObj.status === 'number' ? errObj.status : 0;
+  const errObj = err as {
+    status?: unknown;
+    statusCode?: unknown;
+    code?: unknown;
+    message?: unknown;
+  };
+  const status =
+    parseNumericStatus(errObj.status) || parseNumericStatus(errObj.statusCode);
   if (status === 400 || status === 401 || status === 403 || status === 404 || status === 409 || status === 422) {
     return false;
   }
   const code = String(errObj.code || '').toUpperCase();
-  if (code === 'PGRST116' || code === '42501' || code === '23505' || code === '23503') {
+  if (
+    code === 'PGRST116' ||
+    code === 'PGRST301' ||
+    code === 'PGRST302' ||
+    code === 'PGRST303' ||
+    code === '42501' ||
+    code === '23505' ||
+    code === '23503'
+  ) {
     return false;
   }
   const msg = String(errObj.message || err || '').toLowerCase();

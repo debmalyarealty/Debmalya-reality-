@@ -64,11 +64,11 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
           to={detailPath}
           onClick={handleNavigate}
           className="block w-full h-full"
-          aria-label={`View details for ${property.title}`}
+          aria-label={`View details for ${safeTitle}`}
         >
           <PropertyImage
             src={coverImage}
-            alt={buildPropertyImageAlt(property.title, property.location)}
+            alt={buildPropertyImageAlt(safeTitle, safeLocation)}
             className="lux-img-hover w-full h-full object-cover object-center"
             sizes="(max-width: 640px) 92vw, (max-width: 1024px) 46vw, 380px"
           />
@@ -80,7 +80,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
         <div className="absolute top-3.5 left-3.5 right-3.5 flex items-start justify-between gap-2">
           <div className="flex flex-wrap items-center gap-1.5 min-w-0 max-w-[calc(100%-3.25rem)]">
             <span className="px-3 py-1 rounded-full bg-black/78 backdrop-blur-md text-[13px] font-medium text-white shadow-sm truncate max-w-full">
-              {property.listing_type} &middot; {property.status}
+              {property.listing_type || 'Buy'} &middot; {property.status || 'Available'}
             </span>
             {property.is_featured && (
               <span className="px-2.5 py-1 rounded-full bg-amber-500 text-slate-950 text-[13px] font-semibold shadow-sm whitespace-nowrap">
@@ -95,8 +95,8 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
               onToggle={() => toggleFavorite(property.id)}
               ariaLabel={
                 isFav
-                  ? `Remove ${property.title} from saved properties`
-                  : `Save ${property.title} to favourites`
+                  ? `Remove ${safeTitle} from saved properties`
+                  : `Save ${safeTitle} to favourites`
               }
             />
           )}
@@ -119,7 +119,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
             )}
           </p>
           <span className="text-[13px] font-medium text-[var(--text-muted)] whitespace-nowrap">
-            {property.property_type}
+            {property.property_type || 'Property'}
           </span>
         </div>
 
@@ -129,7 +129,7 @@ export const PropertyCard: React.FC<PropertyCardProps> = ({
             onClick={handleNavigate}
             className="min-h-[44px] w-full flex items-center -my-2 hover:text-[var(--accent-primary)] transition-colors min-w-0"
           >
-            <span className="truncate">{property.title}</span>
+            <span className="truncate">{safeTitle}</span>
           </Link>
         </h3>
 

@@ -23,6 +23,7 @@ import {
 import { useKeyboardSafeForm } from '../lib/formKeyboard';
 import type { Review } from '../types/realty';
 import { useApp } from '../context/AppContext';
+import { toUserFriendlyNetworkError } from '../lib/networkUtils';
 
 const PENDING_REVIEW_AFTER_AUTH_KEY = 'dr_pending_review_after_auth';
 
@@ -34,6 +35,11 @@ const ReviewCardItem: React.FC<{ review: Review; isSingleCard: boolean }> = ({
   const [isOverflowing, setIsOverflowing] = useState(false);
   const quoteRef = useRef<HTMLQuoteElement | null>(null);
 
+  const safeText = review.review_text || '';
+  const safeName = review.reviewer_name || 'Verified Client';
+  const safeCategory = review.customer_type || 'Client';
+  const safeRating = Math.min(5, Math.max(1, Number(review.rating) || 5));
+
   useEffect(() => {
     setExpanded(false);
     const el = quoteRef.current;
@@ -42,13 +48,13 @@ const ReviewCardItem: React.FC<{ review: Review; isSingleCard: boolean }> = ({
       if (!quoteRef.current) return;
       setIsOverflowing(
         quoteRef.current.scrollHeight > quoteRef.current.clientHeight + 2 ||
-          review.review_text.trim().length > 180
+          safeText.trim().length > 180
       );
     };
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [review.id, review.review_text]);
+  }, [review.id, safeText]);
 
   const dateText = formatReviewDate(review.review_date || review.created_at);
 
@@ -57,13 +63,13 @@ const ReviewCardItem: React.FC<{ review: Review; isSingleCard: boolean }> = ({
       <div className="space-y-4">
         <div
           className="flex items-center gap-1.5"
-          aria-label={`Rated ${review.rating} out of 5`}
+          aria-label={`Rated ${safeRating} out of 5`}
         >
           {[1, 2, 3, 4, 5].map((star) => (
             <Star
               key={star}
               className={`w-4 h-4 ${
-                star <= review.rating
+                star <= safeRating
                   ? 'fill-[var(--accent-secondary)] text-[var(--accent-secondary)]'
                   : 'text-[var(--border-input)]'
               }`}
@@ -81,7 +87,7 @@ const ReviewCardItem: React.FC<{ review: Review; isSingleCard: boolean }> = ({
             expanded ? '' : 'line-clamp-4'
           }`}
         >
-          &ldquo;{review.review_text}&rdquo;
+          &ldquo;{safeText}&rdquo;
         </blockquote>
 
         {(isOverflowing || expanded) && (
@@ -98,10 +104,10 @@ const ReviewCardItem: React.FC<{ review: Review; isSingleCard: boolean }> = ({
       <figcaption className="pt-4 border-t border-[var(--border-hairline)] flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm font-medium text-[var(--text-secondary)]">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0">
           <span className="font-semibold text-[var(--text-primary)] break-anywhere">
-            {review.reviewer_name}
+            {safeName}
           </span>
           <span aria-hidden="true">&middot;</span>
-          <span className="text-[13px]">{review.customer_type}</span>
+          <span className="text-[13px]">{safeCategory}</span>
         </div>
         {dateText && (
           <span className="tabular-nums text-[13px] text-[var(--text-muted)] whitespace-nowrap">
@@ -176,7 +182,7 @@ export const ReviewsCarousel: React.FC = () => {
 
   useEffect(() => {
     fetchApprovedReviews()
-      .then((list) => setReviews(list))
+      .then((list) => setReviews(Array.isArray(list) ? list : []))
       .catch(() => setReviews([]))
       .finally(() => setLoading(false));
   }, []);
@@ -235,7 +241,8 @@ export const ReviewsCarousel: React.FC = () => {
       } catch {
         // ignore storage errors
       }
-      openAuthModal('register', {
+      openAuthModal('login', {
+        notice: 'Sign in to write a review',
         suppressRedirect: true,
         onSuccess: () => {
           try {
@@ -350,10 +357,10 @@ export const ReviewsCarousel: React.FC = () => {
       );
       window.setTimeout(() => setSubmittedOk(false), 1800);
     } catch (error) {
-      setFormError(
-        error instanceof Error ? error.message : 'Unable to submit review.'
-      );
+      const msg = toUserFriendlyNetworkError(error, 'Unable to submit review.').message;
+      setFormError(msg);
       setFormErrorKey((k) => k + 1);
+      showToast(msg, 'error');
     } finally {
       setSubmitting(false);
     }

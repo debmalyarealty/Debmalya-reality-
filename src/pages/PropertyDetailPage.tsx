@@ -42,7 +42,8 @@ import {
   buildPropertyMetaTags,
   buildSiteMetaTags,
 } from '../lib/metaTags';
-import { buildPropertyImageAlt } from '../lib/imageUtils';
+import { buildPropertyImageAlt, FALLBACK_IMAGE } from '../lib/imageUtils';
+import { toUserFriendlyNetworkError } from '../lib/networkUtils';
 import type { Property } from '../types/realty';
 import { PropertyImage } from '../components/PropertyImage';
 import { PropertyCard } from '../components/PropertyCard';
@@ -58,6 +59,7 @@ export const PropertyDetailPage: React.FC = () => {
     favoriteIds,
     toggleFavorite,
     openAuthModal,
+    showToast,
     authModalOpen,
     navDrawerOpen,
     firstVisitPromptOpen,
@@ -203,15 +205,14 @@ export const PropertyDetailPage: React.FC = () => {
     if (!lightboxOpen || !property) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    const imgCount = Array.isArray(property.images) ? property.images.length : 0;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setLightboxOpen(false);
-      if (e.key === 'ArrowRight' && property.images.length > 1) {
-        setActiveImageIdx((i) => (i + 1) % property.images.length);
+      if (e.key === 'ArrowRight' && imgCount > 1) {
+        setActiveImageIdx((i) => (i + 1) % imgCount);
       }
-      if (e.key === 'ArrowLeft' && property.images.length > 1) {
-        setActiveImageIdx(
-          (i) => (i - 1 + property.images.length) % property.images.length
-        );
+      if (e.key === 'ArrowLeft' && imgCount > 1) {
+        setActiveImageIdx((i) => (i - 1 + imgCount) % imgCount);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -309,6 +310,22 @@ export const PropertyDetailPage: React.FC = () => {
     }
   };
 
+  const openSiteVisitAuthModal = () => {
+    openAuthModal('login', {
+      notice: 'Sign in to schedule a site visit',
+      suppressRedirect: true,
+      onSuccess: () => {
+        setInterestedMode('visit');
+        window.setTimeout(() => {
+          document.getElementById('property-enquiry-panel')?.scrollIntoView({
+            behavior: prefersReduced ? 'auto' : 'smooth',
+            block: 'start',
+          });
+        }, 60);
+      },
+    });
+  };
+
   const handleStickyBookVisit = () => {
     setInterestedMode('visit');
     window.setTimeout(() => {
@@ -317,13 +334,16 @@ export const PropertyDetailPage: React.FC = () => {
         block: 'start',
       });
     }, 40);
+    if (!user) {
+      openSiteVisitAuthModal();
+    }
   };
 
   const handleSiteVisitSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!property || vSubmitting) return;
     if (!user) {
-      openAuthModal('login');
+      openSiteVisitAuthModal();
       return;
     }
     setVError(null);
@@ -370,14 +390,16 @@ export const PropertyDetailPage: React.FC = () => {
       setVSuccess(
         'Site visit request saved. Track confirmation status in your dashboard.'
       );
+      showToast('Site visit request saved', 'saved');
       setVMsg('');
     } catch (error) {
-      setVError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to submit site visit request.'
-      );
+      const msg = toUserFriendlyNetworkError(
+        error,
+        'Unable to submit site visit request.'
+      ).message;
+      setVError(msg);
       setVShakeKey((k) => k + 1);
+      showToast(msg, 'error');
     } finally {
       setVSubmitting(false);
     }
@@ -425,10 +447,13 @@ export const PropertyDetailPage: React.FC = () => {
         message: eMsg,
       });
       setESuccess('Your inquiry has been sent to Debmalya Realty.');
+      showToast('Your inquiry has been sent', 'saved');
       setEMsg('');
     } catch (error) {
-      setEError(error instanceof Error ? error.message : 'Unable to send inquiry.');
+      const msg = toUserFriendlyNetworkError(error, 'Unable to send inquiry.').message;
+      setEError(msg);
       setEShakeKey((k) => k + 1);
+      showToast(msg, 'error');
     } finally {
       setESubmitting(false);
     }
@@ -479,13 +504,22 @@ export const PropertyDetailPage: React.FC = () => {
 
   const isFav = favoriteIds.includes(property.id);
   const isActive = isPropertyActiveOpportunity(property.status);
-  const images = property.images;
-  const activeImg = images[activeImageIdx]?.url;
+  const images = Array.isArray(property.images) ? property.images : [];
+  const amenities = Array.isArray(property.amenities) ? property.amenities : [];
+  const safeSimilar = Array.isArray(similar) ? similar : [];
+  const safeTitle = property.title || 'Siliguri Property';
+  const safeLocation = property.location || 'Siliguri';
+  const safeBeds = Number(property.bedrooms) || 0;
+  const safeBaths = Number(property.bathrooms) || 0;
+  const safeAreaSqFt = Number(property.area_sqft) || 0;
+  const safeImageIdx =
+    images.length > 0 ? Math.min(activeImageIdx, images.length - 1) : 0;
+  const activeImg = images[safeImageIdx]?.url;
   const googleMapsUrl =
     property.latitude != null && property.longitude != null
       ? `https://www.google.com/maps/search/?api=1&query=${property.latitude},${property.longitude}`
       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-          `${property.address_detail ? `${property.address_detail}, ` : ''}${property.location}, Siliguri, West Bengal`
+          `${property.address_detail ? `${property.address_detail}, ` : ''}${safeLocation}, Siliguri, West Bengal`
         )}`;
 
   return (
@@ -530,251 +564,256 @@ export const PropertyDetailPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Gallery */}
-      <section aria-label="Property Image Gallery" className="space-y-3">
-        <div
-          onDragStart={(e) => e.preventDefault()}
-          onTouchStart={handleGalleryTouchStart}
-          onTouchEnd={(e) => handleGalleryTouchEnd(e, images.length)}
-          onPointerDown={handleGalleryPointerDown}
-          onPointerUp={(e) => handleGalleryPointerUp(e, images.length)}
-          onPointerCancel={() => {
-            gallerySwipeStartX.current = null;
-          }}
-          className="relative aspect-[4/3] sm:aspect-[16/9] max-h-[540px] w-full rounded-2xl overflow-hidden border border-[var(--border-hairline)] bg-[var(--bg-surface-muted)] touch-pan-y select-none [&_img]:pointer-events-none"
-        >
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={activeImg || activeImageIdx}
-              initial={prefersReduced ? { opacity: 0 } : { opacity: 0.3, scale: 1.015 }}
-              animate={prefersReduced ? { opacity: 1 } : { opacity: 1, scale: 1 }}
-              exit={prefersReduced ? { opacity: 0 } : { opacity: 0.3 }}
-              transition={{ duration: 0.32, ease: LUX_EASE }}
-              className="w-full h-full"
+      {/* Desktop Side-by-Side Layout (Gallery + Overview Left, Details + Sticky Enquiry Right); Mobile Preserves Sequential Order */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-[clamp(1.5rem,3.5vw,2.75rem)] items-start">
+        <div className="contents lg:block lg:col-span-7 lg:space-y-8 min-w-0">
+          {/* Gallery */}
+          <section aria-label="Property Image Gallery" className="order-1 space-y-3">
+            <div
+              onDragStart={(e) => e.preventDefault()}
+              onTouchStart={handleGalleryTouchStart}
+              onTouchEnd={(e) => handleGalleryTouchEnd(e, images.length)}
+              onPointerDown={handleGalleryPointerDown}
+              onPointerUp={(e) => handleGalleryPointerUp(e, images.length)}
+              onPointerCancel={() => {
+                gallerySwipeStartX.current = null;
+              }}
+              className="relative aspect-[4/3] sm:aspect-[16/9] max-h-[560px] w-full rounded-2xl overflow-hidden border border-[var(--border-hairline)] bg-[var(--bg-surface-muted)] touch-pan-y select-none [&_img]:pointer-events-none"
             >
-              <PropertyImage
-                src={activeImg}
-                alt={buildPropertyImageAlt(
-                  property.title,
-                  property.location,
-                  activeImageIdx
-                )}
-                className="w-full h-full object-cover object-center"
-                sizes="(max-width: 1024px) 94vw, 1140px"
-                priority
-              />
-            </motion.div>
-          </AnimatePresence>
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={activeImg || activeImageIdx}
+                  initial={prefersReduced ? { opacity: 0 } : { opacity: 0.3, scale: 1.015 }}
+                  animate={prefersReduced ? { opacity: 1 } : { opacity: 1, scale: 1 }}
+                  exit={prefersReduced ? { opacity: 0 } : { opacity: 0.3 }}
+                  transition={{ duration: 0.32, ease: LUX_EASE }}
+                  className="w-full h-full"
+                >
+                  <PropertyImage
+                    src={activeImg}
+                    alt={buildPropertyImageAlt(
+                      safeTitle,
+                      safeLocation,
+                      safeImageIdx
+                    )}
+                    className="w-full h-full object-cover object-center"
+                    sizes="(max-width: 1024px) 94vw, 56vw"
+                    priority
+                  />
+                </motion.div>
+              </AnimatePresence>
 
-          {images.length > 0 && (
-            <span
-              data-testid="gallery-counter"
-              aria-live="polite"
-              className="pointer-events-none absolute bottom-3.5 left-3.5 z-10 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-sm text-white text-[13px] font-medium tabular-nums shadow-sm"
-            >
-              {activeImageIdx + 1}/{images.length}
-            </span>
-          )}
-
-          <button
-            type="button"
-            onClick={() => setLightboxOpen(true)}
-            aria-label="Open full-screen image viewer"
-            className="absolute bottom-3.5 right-3.5 z-10 min-h-[44px] px-4 py-2 rounded-xl bg-black/72 backdrop-blur-sm text-white text-[13px] font-medium inline-flex items-center gap-1.5 hover:bg-black/85 cursor-pointer"
-          >
-            <Expand className="w-4 h-4" />
-            <span>Full Screen ({images.length})</span>
-          </button>
-
-          {images.length > 1 && (
-            <>
-              <button
-                type="button"
-                onClick={() =>
-                  setActiveImageIdx((i) => (i - 1 + images.length) % images.length)
-                }
-                aria-label="Previous image"
-                className="absolute left-3 top-1/2 -translate-y-1/2 z-10 h-11 w-11 rounded-full bg-black/62 text-white inline-flex items-center justify-center hover:bg-black/82 cursor-pointer"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveImageIdx((i) => (i + 1) % images.length)}
-                aria-label="Next image"
-                className="absolute right-3 top-1/2 -translate-y-1/2 z-10 h-11 w-11 rounded-full bg-black/62 text-white inline-flex items-center justify-center hover:bg-black/82 cursor-pointer"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
-            </>
-          )}
-        </div>
-
-        {images.length > 1 && (
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            {images.map((img, idx) => (
-              <button
-                key={img.id}
-                type="button"
-                onClick={() => setActiveImageIdx(idx)}
-                className={`shrink-0 w-28 h-20 rounded-xl overflow-hidden border transition-all cursor-pointer ${
-                  idx === activeImageIdx
-                    ? 'border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40'
-                    : 'border-[var(--border-hairline)] opacity-75 hover:opacity-100'
-                }`}
-              >
-                <PropertyImage
-                  src={img.url}
-                  alt={buildPropertyImageAlt(property.title, property.location, idx)}
-                  className="w-full h-full object-cover object-center"
-                  sizes="112px"
-                />
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Main Content + Sticky Desktop Enquiry Panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-[clamp(1.75rem,4vw,2.5rem)] items-start">
-        <div className="lg:col-span-7 space-y-8 min-w-0">
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2.5 text-[13px] font-medium text-[var(--text-secondary)]">
-              <span className="px-3.5 py-1 rounded-full bg-[#16201B] text-white font-medium text-[13px]">
-                {property.listing_type} &middot; {property.status}
-              </span>
-              <span>{property.property_type}</span>
-              {property.is_demo && (
-                <span className="px-3 py-1 rounded-full bg-[#16201B] text-white font-medium text-[13px]">
-                  Sample listing
+              {images.length > 0 && (
+                <span
+                  data-testid="gallery-counter"
+                  aria-live="polite"
+                  className="pointer-events-none absolute bottom-3.5 left-3.5 z-10 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-sm text-white text-[13px] font-medium tabular-nums shadow-sm"
+                >
+                  {safeImageIdx + 1}/{images.length}
                 </span>
               )}
-            </div>
 
-            <h1 className="font-display text-[clamp(1.875rem,4.5vw,3rem)] font-medium text-[var(--text-primary)] leading-[1.08] break-anywhere">
-              {property.title}
-            </h1>
-
-            <p className="font-display text-[clamp(1.75rem,3.8vw,2.5rem)] font-semibold tabular-nums text-[var(--accent-primary)]">
-              {formatINRReadable(
-                property.price_inr,
-                property.listing_type,
-                property.price_unit
-              )}
-            </p>
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="flex items-start gap-2 text-base text-[var(--text-secondary)] min-w-0 break-anywhere">
-                <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0 mt-1" />
-                <span>
-                  {property.address_detail
-                    ? `${property.address_detail}, `
-                    : ''}
-                  {property.location}, Siliguri, West Bengal
-                </span>
-              </p>
-
-              <a
-                href={googleMapsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="min-h-[44px] px-4 py-2 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-1.5 transition-colors shrink-0"
+              <button
+                type="button"
+                onClick={() => setLightboxOpen(true)}
+                aria-label="Open full-screen image viewer"
+                className="absolute bottom-3.5 right-3.5 z-10 min-h-[44px] px-4 py-2 rounded-xl bg-black/72 backdrop-blur-sm text-white text-[13px] font-medium inline-flex items-center gap-1.5 hover:bg-black/85 cursor-pointer"
               >
-                <MapPin className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                <span>View on map</span>
-                <ExternalLink className="w-3.5 h-3.5 opacity-75" />
-              </a>
-            </div>
-          </div>
+                <Expand className="w-4 h-4" />
+                <span>Full Screen ({images.length})</span>
+              </button>
 
-          {/* Specifications: Beds, Baths, Area, Furnishing */}
-          <div
-            data-testid="property-key-specs"
-            className="grid grid-cols-4 gap-1 sm:gap-4 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2 sm:p-5 py-3"
-          >
-            <div className="space-y-1 min-w-0">
-              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
-                <BedDouble className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Beds</span>
-              </span>
-              <p className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
-                {property.bedrooms > 0 ? property.bedrooms : '—'}
-              </p>
-            </div>
-            <div className="space-y-1 min-w-0">
-              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
-                <Bath className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Baths</span>
-              </span>
-              <p className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
-                {property.bathrooms > 0 ? property.bathrooms : '—'}
-              </p>
-            </div>
-            <div className="space-y-1 min-w-0">
-              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
-                <Maximize2 className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Area</span>
-              </span>
-              <p
-                title={
-                  property.area_sqft > 0
-                    ? `${property.area_sqft.toLocaleString('en-IN')} sq ft`
-                    : undefined
-                }
-                className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] leading-snug break-words"
-              >
-                {property.area_sqft > 0
-                  ? `${property.area_sqft.toLocaleString('en-IN')} sq ft`
-                  : '—'}
-              </p>
-            </div>
-            <div className="space-y-1 min-w-0">
-              <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
-                <Sofa className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Furnishing</span>
-              </span>
-              <p
-                title={property.furnishing || undefined}
-                className="text-[13px] sm:text-base font-semibold text-[var(--text-primary)] leading-snug truncate"
-              >
-                {property.furnishing || '—'}
-              </p>
-            </div>
-          </div>
-
-          {/* Description */}
-          <div className="space-y-3">
-            <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-              Property Overview
-            </h2>
-            <p className="text-base leading-relaxed text-[var(--text-secondary)] whitespace-pre-line fluid-prose break-anywhere">
-              {property.description}
-            </p>
-          </div>
-
-          {/* Amenities as simple chips */}
-          {property.amenities.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
-                Amenities
-              </h2>
-              <div className="flex flex-wrap gap-2">
-                {property.amenities.map((item) => (
-                  <span
-                    key={item}
-                    className="px-3.5 py-1.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-sm text-[var(--text-primary)]"
+              {images.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActiveImageIdx((i) => (i - 1 + images.length) % images.length)
+                    }
+                    aria-label="Previous image"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 z-10 h-11 w-11 rounded-full bg-black/62 text-white inline-flex items-center justify-center hover:bg-black/82 cursor-pointer"
                   >
-                    {item}
-                  </span>
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveImageIdx((i) => (i + 1) % images.length)}
+                    aria-label="Next image"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 z-10 h-11 w-11 rounded-full bg-black/62 text-white inline-flex items-center justify-center hover:bg-black/82 cursor-pointer"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </>
+              )}
+            </div>
+
+            {images.length > 1 && (
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {images.map((img, idx) => (
+                  <button
+                    key={img.id}
+                    type="button"
+                    onClick={() => setActiveImageIdx(idx)}
+                    className={`shrink-0 w-28 h-20 rounded-xl overflow-hidden border transition-all cursor-pointer ${
+                      idx === activeImageIdx
+                        ? 'border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/40'
+                        : 'border-[var(--border-hairline)] opacity-75 hover:opacity-100'
+                    }`}
+                  >
+                    <PropertyImage
+                      src={img.url}
+                      alt={buildPropertyImageAlt(safeTitle, safeLocation, idx)}
+                      className="w-full h-full object-cover object-center"
+                      sizes="112px"
+                    />
+                  </button>
                 ))}
               </div>
+            )}
+          </section>
+
+          {/* Description & Amenities */}
+          <div className="order-3 space-y-6">
+            <div className="space-y-3">
+              <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
+                Property Overview
+              </h2>
+              <p className="text-base leading-relaxed text-[var(--text-secondary)] whitespace-pre-line fluid-prose break-anywhere">
+                {property.description || 'Contact Debmalya Realty for complete details.'}
+              </p>
             </div>
-          )}
+
+            {amenities.length > 0 && (
+              <div className="space-y-3">
+                <h2 className="font-display text-2xl font-semibold text-[var(--text-primary)]">
+                  Amenities
+                </h2>
+                <div className="flex flex-wrap gap-2">
+                  {amenities.map((item) => (
+                    <span
+                      key={item}
+                      className="px-3.5 py-1.5 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-sm text-[var(--text-primary)]"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Sticky Interested? Card */}
-        <aside id="property-enquiry-panel" className="scroll-mt-28 lg:col-span-5 lg:sticky lg:top-24 min-w-0">
-          <div className="rounded-[clamp(1.25rem,3vw,1.5rem)] border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-[clamp(1.125rem,3vw,1.5rem)] shadow-[var(--shadow-subtle)] space-y-5">
+        {/* Right Sticky Column on Desktop: Key Details + Interested? Enquiry Card */}
+        <div className="contents lg:block lg:col-span-5 lg:sticky lg:top-24 lg:space-y-5 lg:max-h-[calc(100dvh-7rem)] lg:overflow-y-auto lg:pr-0.5 min-w-0">
+          <div className="order-2 space-y-5">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2.5 text-[13px] font-medium text-[var(--text-secondary)]">
+                <span className="px-3.5 py-1 rounded-full bg-[#16201B] text-white font-medium text-[13px]">
+                  {property.listing_type || 'Buy'} &middot; {property.status || 'Available'}
+                </span>
+                <span>{property.property_type || 'Property'}</span>
+                {property.is_demo && (
+                  <span className="px-3 py-1 rounded-full bg-[#16201B] text-white font-medium text-[13px]">
+                    Sample listing
+                  </span>
+                )}
+              </div>
+
+              <h1 className="font-display text-[clamp(1.875rem,3.6vw,2.75rem)] font-medium text-[var(--text-primary)] leading-[1.08] break-anywhere">
+                {safeTitle}
+              </h1>
+
+              <p className="font-display text-[clamp(1.75rem,3.2vw,2.35rem)] font-semibold tabular-nums text-[var(--accent-primary)]">
+                {formatINRReadable(
+                  property.price_inr,
+                  property.listing_type,
+                  property.price_unit
+                )}
+              </p>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="flex items-start gap-2 text-base text-[var(--text-secondary)] min-w-0 break-anywhere">
+                  <MapPin className="w-4 h-4 text-[var(--accent-primary)] shrink-0 mt-1" />
+                  <span>
+                    {property.address_detail
+                      ? `${property.address_detail}, `
+                      : ''}
+                    {safeLocation}, Siliguri, West Bengal
+                  </span>
+                </p>
+
+                <a
+                  href={googleMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-h-[44px] px-4 py-2 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[13px] font-medium text-[var(--btn-secondary-text)] inline-flex items-center gap-1.5 transition-colors shrink-0"
+                >
+                  <MapPin className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                  <span>View on map</span>
+                  <ExternalLink className="w-3.5 h-3.5 opacity-75" />
+                </a>
+              </div>
+            </div>
+
+            {/* Specifications: Beds, Baths, Area, Furnishing */}
+            <div
+              data-testid="property-key-specs"
+              className="grid grid-cols-4 lg:grid-cols-2 xl:grid-cols-4 gap-1 sm:gap-4 lg:gap-3 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2 sm:p-5 lg:p-4 py-3"
+            >
+              <div className="space-y-1 min-w-0">
+                <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                  <BedDouble className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Beds</span>
+                </span>
+                <p className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
+                  {safeBeds > 0 ? safeBeds : '—'}
+                </p>
+              </div>
+              <div className="space-y-1 min-w-0">
+                <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                  <Bath className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Baths</span>
+                </span>
+                <p className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] truncate">
+                  {safeBaths > 0 ? safeBaths : '—'}
+                </p>
+              </div>
+              <div className="space-y-1 min-w-0">
+                <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                  <Maximize2 className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Area</span>
+                </span>
+                <p
+                  title={
+                    safeAreaSqFt > 0
+                      ? `${safeAreaSqFt.toLocaleString('en-IN')} sq ft`
+                      : undefined
+                  }
+                  className="text-[13px] sm:text-base font-semibold tabular-nums text-[var(--text-primary)] leading-snug break-words"
+                >
+                  {safeAreaSqFt > 0
+                    ? `${safeAreaSqFt.toLocaleString('en-IN')} sq ft`
+                    : '—'}
+                </p>
+              </div>
+              <div className="space-y-1 min-w-0">
+                <span className="text-[13px] font-medium text-[var(--text-muted)] inline-flex items-center gap-1 max-w-full">
+                  <Sofa className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Furnishing</span>
+                </span>
+                <p
+                  title={property.furnishing || undefined}
+                  className="text-[13px] sm:text-base font-semibold text-[var(--text-primary)] leading-snug truncate"
+                >
+                  {property.furnishing || '—'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Sticky Interested? Card */}
+          <aside id="property-enquiry-panel" className="order-4 scroll-mt-28 min-w-0">
+            <div className="rounded-[clamp(1.25rem,3vw,1.5rem)] border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-[clamp(1.125rem,3vw,1.5rem)] shadow-[var(--shadow-subtle)] space-y-5">
             {!isActive && (
               <div className="p-3.5 rounded-xl bg-[var(--bg-surface-muted)] border border-[var(--border-strong)] text-[13px] text-[var(--text-primary)]">
                 This property is currently marked as <strong>{property.status}</strong> and is shown for portfolio reference only. Contact us for similar available Siliguri options.
@@ -794,7 +833,12 @@ export const PropertyDetailPage: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => setInterestedMode('visit')}
+                  onClick={() => {
+                    setInterestedMode('visit');
+                    if (!user) {
+                      openSiteVisitAuthModal();
+                    }
+                  }}
                   className="btn-primary-lux min-h-[46px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Calendar className="w-4 h-4 shrink-0" />
@@ -838,7 +882,7 @@ export const PropertyDetailPage: React.FC = () => {
                     </p>
                     <button
                       type="button"
-                      onClick={() => openAuthModal('login')}
+                      onClick={openSiteVisitAuthModal}
                       className="btn-primary-lux w-full min-h-[48px] py-2.5 px-4 rounded-xl bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-base font-semibold cursor-pointer"
                     >
                       Sign In to Book a Site Visit
@@ -1329,16 +1373,17 @@ export const PropertyDetailPage: React.FC = () => {
             </div>
           </div>
         </aside>
+        </div>
       </div>
 
       {/* Similar Properties */}
-      {similar.length > 0 && (
+      {safeSimilar.length > 0 && (
         <section className="pt-10 border-t border-[var(--border-hairline)] space-y-6">
           <h2 className="font-display text-[clamp(1.5rem,3vw,2rem)] font-semibold text-[var(--text-primary)]">
             Similar Siliguri Properties
           </h2>
           <div className="fluid-grid-cards">
-            {similar.map((item) => (
+            {safeSimilar.map((item) => (
               <PropertyCard key={item.id} property={item} />
             ))}
           </div>
@@ -1414,17 +1459,23 @@ export const PropertyDetailPage: React.FC = () => {
             >
               <AnimatePresence mode="wait" initial={false}>
                 <motion.img
-                  key={activeImg}
-                  src={activeImg}
+                  key={activeImg || safeImageIdx}
+                  src={activeImg || FALLBACK_IMAGE}
                   alt={buildPropertyImageAlt(
-                    property.title,
-                    property.location,
-                    activeImageIdx
+                    safeTitle,
+                    safeLocation,
+                    safeImageIdx
                   )}
                   draggable={false}
                   loading="lazy"
                   decoding="async"
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    if (img.dataset.fallbackApplied) return;
+                    img.dataset.fallbackApplied = '1';
+                    img.src = FALLBACK_IMAGE;
+                  }}
                   initial={prefersReduced ? { opacity: 0 } : { opacity: 0.35, scale: 0.985 }}
                   animate={prefersReduced ? { opacity: 1 } : { opacity: 1, scale: 1 }}
                   exit={prefersReduced ? { opacity: 0 } : { opacity: 0.35 }}
@@ -1433,7 +1484,7 @@ export const PropertyDetailPage: React.FC = () => {
                 />
               </AnimatePresence>
               <p className="text-[13px] text-white/85 mt-3 tabular-nums">
-                {activeImageIdx + 1}/{images.length}
+                {images.length > 0 ? `${safeImageIdx + 1}/${images.length}` : '1/1'}
               </p>
             </motion.div>
 

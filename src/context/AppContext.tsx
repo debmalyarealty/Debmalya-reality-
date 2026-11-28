@@ -62,7 +62,7 @@ interface OpenAuthModalOptions {
   notice?: string | null;
   email?: string;
   suppressRedirect?: boolean;
-  onSuccess?: () => void;
+  onSuccess?: (profile: UserProfile) => void | Promise<void>;
 }
 
 interface AppContextValue {
@@ -84,7 +84,10 @@ interface AppContextValue {
   setFirstVisitPromptOpen: (open: boolean) => void;
   openAuthModal: (mode?: AuthModalMode, options?: OpenAuthModalOptions) => void;
   closeAuthModal: () => void;
-  consumeAuthSuccessOverride: () => { suppressRedirect: boolean; onSuccess?: () => void };
+  consumeAuthSuccessOverride: () => {
+    suppressRedirect: boolean;
+    onSuccess?: (profile: UserProfile) => void | Promise<void>;
+  };
   refreshUser: (options?: { silent?: boolean }) => Promise<UserProfile | null>;
   refreshSettings: () => Promise<void>;
   toggleFavorite: (propertyId: string) => Promise<void>;
@@ -127,7 +130,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const authCallbackStartedRef = useRef(false);
   const authSuccessOverrideRef = useRef<{
     suppressRedirect: boolean;
-    onSuccess?: () => void;
+    onSuccess?: (profile: UserProfile) => void | Promise<void>;
   }>({ suppressRedirect: false });
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [firstVisitPromptOpen, setFirstVisitPromptOpen] = useState(false);
@@ -493,9 +496,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setAuthModalOpen(true);
     });
 
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event?.reason;
+      const msg =
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === 'string'
+          ? reason
+          : '';
+      if (msg.toLowerCase().includes('abort')) {
+        event.preventDefault();
+      }
+      if (import.meta.env.DEV) {
+        console.error('Unhandled async rejection:', reason);
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    }
+
     if (!isSupabaseConfigured || !supabase) {
       return () => {
         unsubscribeSessionExpired();
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+        }
       };
     }
 
@@ -530,6 +555,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return () => {
       unsubscribeSessionExpired();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+      }
       subscription.unsubscribe();
     };
   }, [refreshSettings, refreshUser, exitOwnerWebsiteView, showToast]);
@@ -575,7 +603,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return;
       }
       if (!user) {
-        openAuthModal('login');
+        openAuthModal('login', {
+          notice: 'Sign in to save this property',
+          suppressRedirect: true,
+          onSuccess: async (signedInProfile) => {
+            if (pendingFavIdsRef.current.has(propertyId)) return;
+            pendingFavIdsRef.current.add(propertyId);
+            try {
+              const existing = await fetchUserFavoriteIds(signedInProfile.id).catch(
+                (): string[] => []
+              );
+              if (existing.includes(propertyId)) {
+                setFavoriteIds((prev) =>
+                  prev.includes(propertyId) ? prev : [...prev, propertyId]
+                );
+                showToast('Saved to your properties', 'saved');
+                return;
+              }
+              setFavoriteIds((prev) =>
+                prev.includes(propertyId) ? prev : [...prev, propertyId]
+              );
+              await addUserFavorite(signedInProfile.id, propertyId);
+              showToast('Saved to your properties', 'saved');
+            } catch (err) {
+              setFavoriteIds((prev) => prev.filter((id) => id !== propertyId));
+              showToast(
+                toUserFriendlyNetworkError(err, 'Unable to save property.').message,
+                'error'
+              );
+            } finally {
+              pendingFavIdsRef.current.delete(propertyId);
+            }
+          },
+        });
         return;
       }
       if (pendingFavIdsRef.current.has(propertyId)) {

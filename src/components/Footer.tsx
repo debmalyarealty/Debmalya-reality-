@@ -69,11 +69,11 @@ export const Footer: React.FC = () => {
   }
 
   return (
-    <footer className="bg-[var(--bg-secondary)] text-[var(--text-secondary)]">
+    <footer className="bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-t border-[var(--border-hairline)]">
       <div className="fluid-container pt-[clamp(3.25rem,6.5vw,5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] md:pb-[clamp(3rem,5vw,4.5rem)] space-y-[clamp(2rem,4vw,3.25rem)]">
-        {/* Brand Name, Tagline & Contact Info from Settings */}
-        <div className="border-b border-[var(--border-hairline)] pb-[clamp(1.75rem,3.5vw,2.75rem)] space-y-5">
-          <div>
+        {/* Brand Name & Tagline from Settings */}
+        <div className="border-b border-[var(--border-hairline)] pb-[clamp(1.75rem,3.5vw,2.75rem)] grid grid-cols-1 lg:grid-cols-12">
+          <div className="lg:col-span-7 min-w-0">
             <p className="font-display font-medium text-[clamp(2.25rem,8vw,6.75rem)] leading-[0.96] tracking-[-0.025em] text-[var(--text-primary)] select-none break-anywhere">
               {businessName}
             </p>

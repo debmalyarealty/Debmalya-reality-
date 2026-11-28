@@ -5,10 +5,11 @@ import { useApp } from '../context/AppContext';
 import { signInWithEmail } from '../lib/supabaseData';
 import { applyDocumentMeta, buildSiteMetaTags } from '../lib/metaTags';
 import { useKeyboardSafeForm } from '../lib/formKeyboard';
+import { toUserFriendlyNetworkError } from '../lib/networkUtils';
 import { BackButton } from '../components/BackButton';
 
 export const OwnerAuthPage: React.FC = () => {
-  const { user, authLoading, refreshUser, exitOwnerWebsiteView } = useApp();
+  const { user, authLoading, refreshUser, exitOwnerWebsiteView, showToast } = useApp();
   const navigate = useNavigate();
 
   const formRef = useRef<HTMLFormElement>(null);
@@ -40,6 +41,7 @@ export const OwnerAuthPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setError(null);
     setSubmitting(true);
 
@@ -53,7 +55,9 @@ export const OwnerAuthPage: React.FC = () => {
         navigate('/my-account', { replace: true });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed.');
+      const msg = toUserFriendlyNetworkError(err, 'Authentication failed.').message;
+      setError(msg);
+      showToast(msg, 'error');
     } finally {
       setSubmitting(false);
     }

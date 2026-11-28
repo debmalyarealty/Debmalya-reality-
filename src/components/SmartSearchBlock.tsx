@@ -392,10 +392,10 @@ export const SmartSearchBlock: React.FC<SmartSearchBlockProps> = ({
   const currentBudgetLabel =
     SMART_BUDGET_RANGES[searchState.budgetIdx]?.label || 'Any budget';
 
-  // Overlap bottom edge of hero (~half height on desktop, balanced overlap on tablet/mobile/landscape)
+  // Clean top spacing so the visible "Search Bar" heading sits on the page canvas below the hero
   const overlapSpacingClass = isLandscapeCompact
-    ? '-mt-3 pb-3'
-    : '-mt-4 sm:-mt-5 md:-mt-7 lg:-mt-9 min-[1025px]:-mt-10 pb-3 md:pb-5';
+    ? 'pt-4 pb-3'
+    : 'pt-5 sm:pt-6 pb-3 md:pb-5';
 
   return (
     <section
@@ -403,7 +403,11 @@ export const SmartSearchBlock: React.FC<SmartSearchBlockProps> = ({
       aria-label="Property search"
       className={`fluid-container relative z-20 ${overlapSpacingClass} scroll-mt-24`}
     >
-      <h2 className="sr-only">Search properties</h2>
+      <div className="w-full max-w-[1100px] mx-auto mb-2.5 px-1">
+        <h2 className="font-display text-lg sm:text-xl font-medium tracking-[-0.01em] text-[var(--text-primary)]">
+          Search Bar
+        </h2>
+      </div>
 
       <motion.form
         data-testid="home-search-card"
@@ -419,68 +423,71 @@ export const SmartSearchBlock: React.FC<SmartSearchBlockProps> = ({
           duration: prefersReduced ? 0.01 : 0.5,
           ease: EASE_OUT,
         }}
-        className="w-full max-w-[1100px] mx-auto rounded-[22px] md:rounded-[26px] min-[1025px]:rounded-[28px] bg-[var(--bg-surface)] border border-[#B08D57]/45 dark:border-[#DEC085]/35 shadow-[0_22px_54px_-18px_rgba(28,26,23,0.16)] dark:shadow-[0_26px_62px_-18px_rgba(0,0,0,0.62)] p-2.5 sm:p-3 md:px-4 md:py-3.5 min-[1025px]:px-3.5 min-[1025px]:py-2.5"
+        className="w-full max-w-[1100px] mx-auto rounded-[22px] md:rounded-[26px] min-[1025px]:rounded-[28px] bg-[var(--bg-surface)] border border-[#B08D57]/45 dark:border-[#DEC085]/35 shadow-[0_22px_54px_-18px_rgba(28,26,23,0.16)] dark:shadow-[0_26px_62px_-18px_rgba(0,0,0,0.62)] p-2.5 sm:p-3 md:px-4 md:py-3.5"
       >
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:gap-x-0 md:gap-y-2.5 min-[1025px]:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] min-[1025px]:gap-0 items-center">
-          {/* 1. Buy / Rent Toggle */}
-          <motion.div
-            initial={prefersReduced ? false : { opacity: 0, y: 12 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, amount: 0.15 }}
-            transition={{
-              duration: prefersReduced ? 0.01 : 0.34,
-              delay: prefersReduced ? 0 : 0.08,
-              ease: EASE_OUT,
-            }}
-            className="col-span-2 md:col-span-4 md:justify-self-start min-[1025px]:col-span-1 min-[1025px]:justify-self-auto min-w-0"
-          >
-            <div
-              role="group"
-              aria-label="Buy or Rent"
-              className="relative grid grid-cols-2 p-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-canvas)] w-full md:w-[158px] min-[1025px]:w-[152px] min-h-[52px] md:min-h-[48px] min-[1025px]:min-h-[54px]"
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:gap-x-0 md:gap-y-2.5 items-center">
+          {/* Row 1: Full-width 50/50 Buy / Rent Toggle on Mobile, Tablet & Desktop */}
+          <div className="col-span-2 md:col-span-4 grid grid-cols-1 gap-2 min-w-0">
+            {/* 1. Buy / Rent Toggle */}
+            <motion.div
+              initial={prefersReduced ? false : { opacity: 0, y: 12 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{
+                duration: prefersReduced ? 0.01 : 0.34,
+                delay: prefersReduced ? 0 : 0.08,
+                ease: EASE_OUT,
+              }}
+              className="w-full min-w-0"
             >
-              {/* Smooth sliding gold pill (transform & opacity only) */}
-              <span
-                aria-hidden="true"
-                style={{
-                  transform:
+              <div
+                role="group"
+                aria-label="Buy or Rent"
+                className="relative grid grid-cols-2 p-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-canvas)] w-full min-h-[52px] min-[1025px]:min-h-[54px]"
+              >
+                {/* Smooth sliding gold pill (transform & opacity only) */}
+                <span
+                  aria-hidden="true"
+                  style={{
+                    transform:
+                      searchState.listing === 'Rent'
+                        ? 'translate3d(100%, 0, 0)'
+                        : 'translate3d(0%, 0, 0)',
+                    opacity: searchState.listing === 'All' ? 0 : 1,
+                  }}
+                  className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full bg-[var(--cta-gold-bg)] shadow-[0_2px_8px_-2px_rgba(28,26,23,0.18)] transition-[transform,opacity] duration-250 ease-out motion-reduce:transition-none"
+                />
+
+                <button
+                  type="button"
+                  aria-pressed={searchState.listing === 'Buy'}
+                  onClick={() => handleToggleListing('Buy')}
+                  className={`relative z-10 min-h-[42px] rounded-full text-sm inline-flex items-center justify-center whitespace-nowrap transition-colors duration-200 ease-out motion-reduce:transition-none cursor-pointer ${
+                    searchState.listing === 'Buy'
+                      ? 'text-[var(--cta-gold-ink)] font-semibold'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-medium'
+                  }`}
+                >
+                  Buy
+                </button>
+
+                <button
+                  type="button"
+                  aria-pressed={searchState.listing === 'Rent'}
+                  onClick={() => handleToggleListing('Rent')}
+                  className={`relative z-10 min-h-[42px] rounded-full text-sm inline-flex items-center justify-center whitespace-nowrap transition-colors duration-200 ease-out motion-reduce:transition-none cursor-pointer ${
                     searchState.listing === 'Rent'
-                      ? 'translate3d(100%, 0, 0)'
-                      : 'translate3d(0%, 0, 0)',
-                  opacity: searchState.listing === 'All' ? 0 : 1,
-                }}
-                className="pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full bg-[var(--cta-gold-bg)] shadow-[0_2px_8px_-2px_rgba(28,26,23,0.18)] transition-[transform,opacity] duration-250 ease-out motion-reduce:transition-none"
-              />
+                      ? 'text-[var(--cta-gold-ink)] font-semibold'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-medium'
+                  }`}
+                >
+                  Rent
+                </button>
+              </div>
+            </motion.div>
+          </div>
 
-              <button
-                type="button"
-                aria-pressed={searchState.listing === 'Buy'}
-                onClick={() => handleToggleListing('Buy')}
-                className={`relative z-10 min-h-[42px] rounded-full text-sm inline-flex items-center justify-center whitespace-nowrap transition-colors duration-200 ease-out motion-reduce:transition-none cursor-pointer ${
-                  searchState.listing === 'Buy'
-                    ? 'text-[var(--cta-gold-ink)] font-semibold'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-medium'
-                }`}
-              >
-                Buy
-              </button>
-
-              <button
-                type="button"
-                aria-pressed={searchState.listing === 'Rent'}
-                onClick={() => handleToggleListing('Rent')}
-                className={`relative z-10 min-h-[42px] rounded-full text-sm inline-flex items-center justify-center whitespace-nowrap transition-colors duration-200 ease-out motion-reduce:transition-none cursor-pointer ${
-                  searchState.listing === 'Rent'
-                    ? 'text-[var(--cta-gold-ink)] font-semibold'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-medium'
-                }`}
-              >
-                Rent
-              </button>
-            </div>
-          </motion.div>
-
-          {/* 2. Location Dropdown */}
+          {/* 3. Location Dropdown */}
           <SearchSelectField
             id="home-search-location"
             label="Location"
@@ -496,7 +503,6 @@ export const SmartSearchBlock: React.FC<SmartSearchBlockProps> = ({
             }
             onClose={() => setOpenMenu(null)}
             prefersReduced={prefersReduced}
-            showLeftDividerOnDesktop
             staggerIndex={1}
           />
 

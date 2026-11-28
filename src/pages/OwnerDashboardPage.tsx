@@ -84,10 +84,12 @@ import { DEFAULT_SERVICES } from '../lib/demoData';
 import {
   buildPropertyImageAlt,
   compressImageForUpload,
+  FALLBACK_IMAGE,
   formatFileSize,
   MAX_PROPERTY_PHOTOS,
   reorderItems,
 } from '../lib/imageUtils';
+import { useDebouncedValue } from '../lib/networkUtils';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { LUX_EASE } from '../lib/motion';
 import { applyDocumentMeta, buildSiteMetaTags } from '../lib/metaTags';
@@ -351,6 +353,14 @@ export const OwnerDashboardPage: React.FC = () => {
   const [clientSelectMode, setClientSelectMode] = useState(false);
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
 
+  // Per-item busy guards to prevent double clicks
+  const [togglingPropIds, setTogglingPropIds] = useState<string[]>([]);
+  const [busyReviewIds, setBusyReviewIds] = useState<string[]>([]);
+  const [busyTeamIds, setBusyTeamIds] = useState<string[]>([]);
+
+  const debouncedEnqSearch = useDebouncedValue(enqSearch, 250);
+  const debouncedClientSearch = useDebouncedValue(clientSearch, 250);
+
   // Settings accordion state (Service photos)
   const [openServicePhotoKey, setOpenServicePhotoKey] = useState<string | null>(
     null
@@ -496,19 +506,26 @@ export const OwnerDashboardPage: React.FC = () => {
   }, [confirmDialog, confirmBusy]);
 
   const applyOwnerData = (data: OwnerDashboardData) => {
-    setStats(data.stats);
-    setProperties(data.properties);
-    setFavoriteCounts(data.favoriteCounts || {});
-    setSavedByClientId(data.savedByClientId || {});
-    setInquiries(data.inquiries);
-    setBookings(data.bookings);
-    setReviews(data.reviews);
-    setAgents(data.agents);
-    setClients(data.clients);
-    setSiteSettings(data.settings);
+    const safeProps = Array.isArray(data?.properties) ? data.properties : [];
+    const safeInq = Array.isArray(data?.inquiries) ? data.inquiries : [];
+    const safeBookings = Array.isArray(data?.bookings) ? data.bookings : [];
+    const safeRevs = Array.isArray(data?.reviews) ? data.reviews : [];
+    const safeAgents = Array.isArray(data?.agents) ? data.agents : [];
+    const safeClients = Array.isArray(data?.clients) ? data.clients : [];
+
+    setStats(data?.stats ?? null);
+    setProperties(safeProps);
+    setFavoriteCounts(data?.favoriteCounts || {});
+    setSavedByClientId(data?.savedByClientId || {});
+    setInquiries(safeInq);
+    setBookings(safeBookings);
+    setReviews(safeRevs);
+    setAgents(safeAgents);
+    setClients(safeClients);
+    setSiteSettings(data?.settings ?? null);
     setViewingClient((prev) => {
       if (!prev) return null;
-      return data.clients.find((c) => c.id === prev.id) || null;
+      return safeClients.find((c) => c.id === prev.id) || null;
     });
   };
 
@@ -546,35 +563,37 @@ export const OwnerDashboardPage: React.FC = () => {
   }, [user, authLoading]);
 
   const combinedEnquiries = useMemo(() => {
-    const enqItems = inquiries.map((item) => ({
+    const safeInq = Array.isArray(inquiries) ? inquiries : [];
+    const safeBookings = Array.isArray(bookings) ? bookings : [];
+    const enqItems = safeInq.map((item) => ({
       kind: 'enquiry' as const,
       id: item.id,
       sortTime: new Date(item.created_at).getTime() || 0,
       createdAt: item.created_at,
-      name: item.name,
-      email: item.email,
-      phone: item.phone,
-      subject: item.property_title || item.interested_in,
+      name: item.name || 'Client',
+      email: item.email || '',
+      phone: item.phone || '',
+      subject: item.property_title || item.interested_in || 'General enquiry',
       visitSchedule: undefined as string | undefined,
       propertySlug: undefined as string | undefined,
-      message: item.message,
+      message: item.message || '',
       note: item.owner_notes || '',
       isRead: item.is_read !== false,
       unifiedStatus: inquiryToUnified(item.status),
     }));
 
-    const visitItems = bookings.map((item) => ({
+    const visitItems = safeBookings.map((item) => ({
       kind: 'visit' as const,
       id: item.id,
       sortTime: new Date(item.created_at).getTime() || 0,
       createdAt: item.created_at,
-      name: item.customer_name,
-      email: item.email,
-      phone: item.phone,
+      name: item.customer_name || 'Client',
+      email: item.email || '',
+      phone: item.phone || '',
       subject: item.property_title || 'Site visit request',
       propertySlug: item.property_slug,
-      visitSchedule: `${item.preferred_date} at ${item.preferred_time}`,
-      message: item.note,
+      visitSchedule: `${item.preferred_date || ''} at ${item.preferred_time || ''}`,
+      message: item.note || '',
       note: item.owner_note || '',
       isRead: true,
       unifiedStatus: bookingToUnified(item.status),
@@ -584,14 +603,15 @@ export const OwnerDashboardPage: React.FC = () => {
   }, [inquiries, bookings]);
 
   const filteredProperties = useMemo(() => {
+    const safeProps = Array.isArray(properties) ? properties : [];
     if (propFilter === 'featured') {
-      return properties.filter((p) => p.is_featured);
+      return safeProps.filter((p) => p.is_featured);
     }
-    return properties;
+    return safeProps;
   }, [properties, propFilter]);
 
   const filteredCombinedEnquiries = useMemo(() => {
-    const q = enqSearch.trim().toLowerCase();
+    const q = debouncedEnqSearch.trim().toLowerCase();
     return combinedEnquiries.filter((e) => {
       if (enqFilter !== 'all' && e.unifiedStatus !== enqFilter) return false;
       if (!q) return true;
@@ -600,21 +620,22 @@ export const OwnerDashboardPage: React.FC = () => {
       } ${e.message} ${e.note}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [combinedEnquiries, enqFilter, enqSearch]);
+  }, [combinedEnquiries, enqFilter, debouncedEnqSearch]);
 
   const filteredReviews = useMemo(() => {
-    if (revFilter === 'all') return reviews;
-    return reviews.filter((r) => r.status === revFilter);
+    const safeRevs = Array.isArray(reviews) ? reviews : [];
+    if (revFilter === 'all') return safeRevs;
+    return safeRevs.filter((r) => r.status === revFilter);
   }, [reviews, revFilter]);
 
   const filteredClients = useMemo(
-    () => filterClientsBySearch(clients, clientSearch),
-    [clients, clientSearch]
+    () => filterClientsBySearch(Array.isArray(clients) ? clients : [], debouncedClientSearch),
+    [clients, debouncedClientSearch]
   );
 
   const propertyById = useMemo(() => {
     const map = new Map<string, Property>();
-    for (const p of properties) {
+    for (const p of Array.isArray(properties) ? properties : []) {
       map.set(p.id, p);
     }
     return map;
@@ -685,11 +706,12 @@ export const OwnerDashboardPage: React.FC = () => {
     siteSettings?.business_name || appSettings?.business_name || 'Debmalya Realty';
   const logoUrl = siteSettings?.logo_url || appSettings?.logo_url;
   const availableLocations =
-    siteSettings?.locations && siteSettings.locations.length > 0
+    Array.isArray(siteSettings?.locations) && siteSettings.locations.length > 0
       ? siteSettings.locations
       : ['Siliguri', 'Sevoke Road', 'Bhanu Nagar', 'Haiderpara', 'Gugni More'];
   const availableCategories =
-    siteSettings?.property_types && siteSettings.property_types.length > 0
+    Array.isArray(siteSettings?.property_types) &&
+    siteSettings.property_types.length > 0
       ? siteSettings.property_types
       : ['Flats / Apartments', 'Villas', 'Houses', 'Residential Plots', 'Land'];
 
@@ -970,7 +992,7 @@ export const OwnerDashboardPage: React.FC = () => {
     applyUrl: (current: WebsiteSettings, url: string) => WebsiteSettings
   ) => {
     const file = files?.[0];
-    if (!file || !siteSettings) return;
+    if (!file || !siteSettings || photoSlotBusy[slotKey]) return;
 
     setPhotoSlotBusy((prev) => ({ ...prev, [slotKey]: true }));
     setPhotoSlotError((prev) => ({ ...prev, [slotKey]: undefined }));
@@ -1016,7 +1038,7 @@ export const OwnerDashboardPage: React.FC = () => {
     slotKey: string,
     clearUrl: (current: WebsiteSettings) => WebsiteSettings
   ) => {
-    if (!siteSettings) return;
+    if (!siteSettings || photoSlotBusy[slotKey]) return;
     setPhotoSlotBusy((prev) => ({ ...prev, [slotKey]: true }));
     setPhotoSlotError((prev) => ({ ...prev, [slotKey]: undefined }));
     setPhotoSlotStats((prev) => ({ ...prev, [slotKey]: undefined }));
@@ -1091,7 +1113,7 @@ export const OwnerDashboardPage: React.FC = () => {
     setPropStepError(null);
     setPropFieldErrors({});
     resetPhotoUploadUi();
-    setPImages(prop.images.map((i) => i.url));
+    setPImages((Array.isArray(prop.images) ? prop.images : []).map((i) => i.url));
     setPTitle(prop.title);
     setPPrice(String(prop.price_inr));
     setPPriceUnit(
@@ -1105,7 +1127,7 @@ export const OwnerDashboardPage: React.FC = () => {
     setPAreaUnit('sqft');
     setPFurnishing(prop.furnishing);
     setPParking(prop.parking || '');
-    setPAmenities(prop.amenities || []);
+    setPAmenities(Array.isArray(prop.amenities) ? prop.amenities : []);
     setCustomAmenityInput('');
     setShowCustomAmenity(false);
     setPLocation(prop.location);
@@ -1189,6 +1211,7 @@ export const OwnerDashboardPage: React.FC = () => {
 
   const handlePublishProperty = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingProp) return;
     for (const s of [2, 4] as PropertyWizardStep[]) {
       const result = validatePropertyStep(s);
       if (result.summary) {
@@ -1250,6 +1273,8 @@ export const OwnerDashboardPage: React.FC = () => {
   };
 
   const togglePublish = async (prop: Property) => {
+    if (togglingPropIds.includes(prop.id)) return;
+    setTogglingPropIds((prev) => [...prev, prop.id]);
     try {
       await ownerTogglePropertyPublished(prop.id, !prop.is_published);
       showToast(
@@ -1262,11 +1287,13 @@ export const OwnerDashboardPage: React.FC = () => {
         err instanceof Error ? err.message : 'Unable to update visibility.',
         'error'
       );
+    } finally {
+      setTogglingPropIds((prev) => prev.filter((id) => id !== prop.id));
     }
   };
 
   const requestDeleteProperty = (prop: Property) => {
-    const imageUrls = prop.images.map((img) => img.url);
+    const imageUrls = (Array.isArray(prop.images) ? prop.images : []).map((img) => img.url);
     setConfirmDialog({
       title: 'Delete property?',
       message: `Permanently delete "${prop.title}"? This cannot be undone.`,
@@ -1298,7 +1325,7 @@ export const OwnerDashboardPage: React.FC = () => {
         await ownerDeletePropertiesBulk(
           selected.map((p) => ({
             id: p.id,
-            imageUrls: p.images.map((img) => img.url),
+            imageUrls: (Array.isArray(p.images) ? p.images : []).map((img) => img.url),
           }))
         );
         setProperties((prev) => prev.filter((p) => !idSet.has(p.id)));
@@ -1340,7 +1367,7 @@ export const OwnerDashboardPage: React.FC = () => {
     id: string,
     status: InquiryStatus,
     notes: string
-  ) => {
+  ): Promise<boolean> => {
     try {
       const target = inquiries.find((inq) => inq.id === id);
       if (target && !target.is_read) {
@@ -1356,11 +1383,13 @@ export const OwnerDashboardPage: React.FC = () => {
       await ownerUpdateInquiry(id, status, notes);
       showToast('Saved', 'saved');
       await loadAll(true);
+      return true;
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : 'Unable to update enquiry.',
         'error'
       );
+      return false;
     }
   };
 
@@ -1368,16 +1397,18 @@ export const OwnerDashboardPage: React.FC = () => {
     id: string,
     status: BookingStatus,
     note: string
-  ) => {
+  ): Promise<boolean> => {
     try {
       await ownerUpdateBooking(id, status, note);
       showToast('Saved', 'saved');
       await loadAll(true);
+      return true;
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : 'Unable to update visit request.',
         'error'
       );
+      return false;
     }
   };
 
@@ -1454,6 +1485,8 @@ export const OwnerDashboardPage: React.FC = () => {
     id: string,
     patch: { status?: 'pending' | 'approved' | 'rejected'; is_featured?: boolean }
   ) => {
+    if (busyReviewIds.includes(id)) return;
+    setBusyReviewIds((prev) => [...prev, id]);
     try {
       await ownerUpdateReview(id, patch);
       showToast(
@@ -1474,6 +1507,8 @@ export const OwnerDashboardPage: React.FC = () => {
         err instanceof Error ? err.message : 'Unable to update review.',
         'error'
       );
+    } finally {
+      setBusyReviewIds((prev) => prev.filter((item) => item !== id));
     }
   };
 
@@ -1570,6 +1605,7 @@ export const OwnerDashboardPage: React.FC = () => {
 
   const saveTeamMember = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingTeam) return;
     if (!aName.trim() || !aPos.trim()) {
       showToast('Please enter team member name and role.', 'error');
       return;
@@ -1602,6 +1638,8 @@ export const OwnerDashboardPage: React.FC = () => {
   };
 
   const toggleTeamVisibility = async (ag: Agent) => {
+    if (busyTeamIds.includes(ag.id)) return;
+    setBusyTeamIds((prev) => [...prev, ag.id]);
     try {
       await ownerToggleTeamMemberVisibility(ag.id, !ag.is_active);
       showToast(ag.is_active ? 'Hidden from website' : 'Visible on website', 'info');
@@ -1611,6 +1649,8 @@ export const OwnerDashboardPage: React.FC = () => {
         err instanceof Error ? err.message : 'Unable to update team visibility.',
         'error'
       );
+    } finally {
+      setBusyTeamIds((prev) => prev.filter((id) => id !== ag.id));
     }
   };
 
@@ -1630,7 +1670,7 @@ export const OwnerDashboardPage: React.FC = () => {
   const handleSaveSettingsSection = async (
     section: 'contact' | 'text' | 'social' | 'googleReview'
   ) => {
-    if (!siteSettings) return;
+    if (!siteSettings || savingSettingsSection) return;
     setSavingSettingsSection(section);
     try {
       await ownerSaveSiteSettings(siteSettings);
@@ -1654,10 +1694,13 @@ export const OwnerDashboardPage: React.FC = () => {
   const addLocationTag = () => {
     const clean = newLocationInput.trim();
     if (!clean || !siteSettings) return;
-    if (!siteSettings.locations.includes(clean)) {
+    const currentLocations = Array.isArray(siteSettings.locations)
+      ? siteSettings.locations
+      : [];
+    if (!currentLocations.includes(clean)) {
       setSiteSettings({
         ...siteSettings,
-        locations: [...siteSettings.locations, clean],
+        locations: [...currentLocations, clean],
       });
     }
     setNewLocationInput('');
@@ -1666,10 +1709,13 @@ export const OwnerDashboardPage: React.FC = () => {
   const addCategoryTag = () => {
     const clean = newCategoryInput.trim();
     if (!clean || !siteSettings) return;
-    if (!siteSettings.property_types.includes(clean)) {
+    const currentTypes = Array.isArray(siteSettings.property_types)
+      ? siteSettings.property_types
+      : [];
+    if (!currentTypes.includes(clean)) {
       setSiteSettings({
         ...siteSettings,
-        property_types: [...siteSettings.property_types, clean],
+        property_types: [...currentTypes, clean],
       });
     }
     setNewCategoryInput('');
@@ -1702,6 +1748,12 @@ export const OwnerDashboardPage: React.FC = () => {
                 src={logoUrl}
                 alt={businessName}
                 referrerPolicy="no-referrer"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (img.dataset.fallbackApplied) return;
+                  img.dataset.fallbackApplied = '1';
+                  img.src = FALLBACK_IMAGE;
+                }}
                 className="h-6 w-6 sm:h-7 sm:w-7 rounded-full object-contain shrink-0"
               />
             ) : (
@@ -2380,6 +2432,12 @@ export const OwnerDashboardPage: React.FC = () => {
                                         )}
                                         loading="lazy"
                                         decoding="async"
+                                        onError={(e) => {
+                                          const img = e.currentTarget;
+                                          if (img.dataset.fallbackApplied) return;
+                                          img.dataset.fallbackApplied = '1';
+                                          img.src = FALLBACK_IMAGE;
+                                        }}
                                         className="w-full h-full object-cover select-none"
                                       />
                                       <span
@@ -3236,7 +3294,7 @@ export const OwnerDashboardPage: React.FC = () => {
                             </button>
                           </div>
                         ) : (
-                          <div className="space-y-3.5">
+                          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
                             {filteredProperties.map((prop) => {
                               const savedCount = favoriteCounts[prop.id] || 0;
                               const linkCopied = copiedPropId === prop.id;
@@ -3276,7 +3334,11 @@ export const OwnerDashboardPage: React.FC = () => {
                                       )}
                                       <div className="w-24 sm:w-28 aspect-[4/3] rounded-xl overflow-hidden shrink-0 bg-[var(--bg-surface-muted)]">
                                         <PropertyImage
-                                          src={prop.images[0]?.url}
+                                          src={
+                                            (Array.isArray(prop.images)
+                                              ? prop.images
+                                              : [])[0]?.url
+                                          }
                                           alt={buildPropertyImageAlt(
                                             prop.title,
                                             prop.location
@@ -3332,6 +3394,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                     <div className="shrink-0">
                                       <SwitchControl
                                         checked={prop.is_published}
+                                        disabled={togglingPropIds.includes(prop.id)}
                                         onChange={() => void togglePublish(prop)}
                                         label="Visible on website"
                                       />
@@ -3361,16 +3424,18 @@ export const OwnerDashboardPage: React.FC = () => {
                                     <div className="flex flex-wrap items-center gap-2">
                                       <button
                                         type="button"
+                                        disabled={togglingPropIds.includes(prop.id)}
                                         onClick={() => openEditProperty(prop)}
-                                        className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer"
+                                        className="min-h-[48px] px-4 rounded-xl border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[13px] font-medium text-[var(--text-primary)] inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-55"
                                       >
                                         <Edit3 className="w-4 h-4 text-[var(--accent-primary)]" />
                                         <span>Edit</span>
                                       </button>
                                       <button
                                         type="button"
+                                        disabled={togglingPropIds.includes(prop.id)}
                                         onClick={() => requestDeleteProperty(prop)}
-                                        className="min-h-[48px] px-4 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-[13px] font-semibold text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
+                                        className="min-h-[48px] px-4 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-[13px] font-semibold text-rose-500 inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-55"
                                       >
                                         <Trash2 className="w-4 h-4" />
                                         <span>Delete</span>
@@ -3548,7 +3613,7 @@ export const OwnerDashboardPage: React.FC = () => {
                         </button>
                       </div>
                     ) : (
-                      <div className="space-y-4">
+                      <div className="grid grid-cols-1 2xl:grid-cols-2 gap-4 items-start">
                         {filteredCombinedEnquiries.map((entry) => {
                           const key =
                             entry.kind === 'enquiry'
@@ -3584,13 +3649,13 @@ export const OwnerDashboardPage: React.FC = () => {
                                   void handleMarkEnquiryRead(entry.id);
                                 }
                               }}
-                              onSave={async (nextStatus, nextNote) => {
-                                await handleInquiryUpdate(
+                              onSave={async (nextStatus, nextNote) =>
+                                handleInquiryUpdate(
                                   entry.id,
                                   unifiedToInquiry(nextStatus),
                                   nextNote
-                                );
-                              }}
+                                )
+                              }
                             />
                           ) : (
                             <OwnerUnifiedEnquiryCard
@@ -3613,13 +3678,13 @@ export const OwnerDashboardPage: React.FC = () => {
                               onToggleSelect={toggleSelect}
                               onDelete={() => requestDeleteEnquiryEntry(entry)}
                               onOpenPropertyLink={enterOwnerWebsiteView}
-                              onSave={async (nextStatus, nextNote) => {
-                                await handleBookingUpdate(
+                              onSave={async (nextStatus, nextNote) =>
+                                handleBookingUpdate(
                                   entry.id,
                                   unifiedToBooking(nextStatus),
                                   nextNote
-                                );
-                              }}
+                                )
+                              }
                             />
                           );
                         })}
@@ -3753,7 +3818,7 @@ export const OwnerDashboardPage: React.FC = () => {
                         </button>
                       </div>
                     ) : (
-                      <div className="space-y-4">
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
                         {filteredReviews.map((rev) => {
                           const reviewDateText = formatReviewDate(
                             rev.review_date || rev.created_at
@@ -3831,9 +3896,10 @@ export const OwnerDashboardPage: React.FC = () => {
 
                                 <button
                                   type="button"
+                                  disabled={busyReviewIds.includes(rev.id)}
                                   onClick={() => requestDeleteReview(rev)}
                                   aria-label={`Delete review by ${rev.reviewer_name}`}
-                                  className="min-h-[48px] px-3.5 inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-sm font-semibold text-rose-500 cursor-pointer shrink-0"
+                                  className="min-h-[48px] px-3.5 inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-sm font-semibold text-rose-500 cursor-pointer disabled:opacity-55 shrink-0"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                   <span>Delete</span>
@@ -3848,7 +3914,10 @@ export const OwnerDashboardPage: React.FC = () => {
                                 <div className="flex flex-wrap items-center gap-2">
                                   <button
                                     type="button"
-                                    disabled={rev.status === 'approved'}
+                                    disabled={
+                                      rev.status === 'approved' ||
+                                      busyReviewIds.includes(rev.id)
+                                    }
                                     onClick={() =>
                                       void handleReviewUpdate(rev.id, {
                                         status: 'approved',
@@ -3870,7 +3939,10 @@ export const OwnerDashboardPage: React.FC = () => {
 
                                   <button
                                     type="button"
-                                    disabled={rev.status === 'rejected'}
+                                    disabled={
+                                      rev.status === 'rejected' ||
+                                      busyReviewIds.includes(rev.id)
+                                    }
                                     onClick={() =>
                                       void handleReviewUpdate(rev.id, {
                                         status: 'rejected',
@@ -3893,13 +3965,14 @@ export const OwnerDashboardPage: React.FC = () => {
 
                                 <button
                                   type="button"
+                                  disabled={busyReviewIds.includes(rev.id)}
                                   aria-pressed={rev.is_featured}
                                   onClick={() =>
                                     void handleReviewUpdate(rev.id, {
                                       is_featured: !rev.is_featured,
                                     })
                                   }
-                                  className={`min-h-[48px] px-4 rounded-full border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
+                                  className={`min-h-[48px] px-4 rounded-full border text-sm font-medium inline-flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-55 ${
                                     rev.is_featured
                                       ? 'bg-[var(--cta-gold-bg)] border-[var(--cta-gold-bg)] text-[var(--cta-gold-ink)] font-semibold'
                                       : 'bg-[var(--btn-secondary-bg)] border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] hover:border-[var(--border-strong)]'
@@ -4492,6 +4565,12 @@ export const OwnerDashboardPage: React.FC = () => {
                                           alt={slot.label}
                                           loading="lazy"
                                           decoding="async"
+                                          onError={(e) => {
+                                            const img = e.currentTarget;
+                                            if (img.dataset.fallbackApplied) return;
+                                            img.dataset.fallbackApplied = '1';
+                                            img.src = FALLBACK_IMAGE;
+                                          }}
                                           className={`w-full h-full ${
                                             slot.key === 'logo'
                                               ? 'object-contain p-3'
@@ -4625,6 +4704,12 @@ export const OwnerDashboardPage: React.FC = () => {
                                               alt={svc.title}
                                               loading="lazy"
                                               decoding="async"
+                                              onError={(e) => {
+                                                const img = e.currentTarget;
+                                                if (img.dataset.fallbackApplied) return;
+                                                img.dataset.fallbackApplied = '1';
+                                                img.src = FALLBACK_IMAGE;
+                                              }}
                                               className="w-full h-full object-cover"
                                             />
                                           </div>
@@ -4836,6 +4921,12 @@ export const OwnerDashboardPage: React.FC = () => {
                                 }
                                 loading="lazy"
                                 decoding="async"
+                                onError={(e) => {
+                                  const img = e.currentTarget;
+                                  if (img.dataset.fallbackApplied) return;
+                                  img.dataset.fallbackApplied = '1';
+                                  img.src = FALLBACK_IMAGE;
+                                }}
                                 className="w-11 h-11 rounded-full object-cover object-top border border-[var(--border-hairline)]"
                               />
                             )}
@@ -4919,6 +5010,12 @@ export const OwnerDashboardPage: React.FC = () => {
                                     alt={ag.name}
                                     loading="lazy"
                                     decoding="async"
+                                    onError={(e) => {
+                                      const img = e.currentTarget;
+                                      if (img.dataset.fallbackApplied) return;
+                                      img.dataset.fallbackApplied = '1';
+                                      img.src = FALLBACK_IMAGE;
+                                    }}
                                     className="w-11 h-11 rounded-full object-cover object-top shrink-0 bg-[var(--bg-surface-muted)]"
                                   />
                                 ) : (
@@ -4939,6 +5036,7 @@ export const OwnerDashboardPage: React.FC = () => {
                               <div className="flex items-center gap-1.5 shrink-0">
                                 <button
                                   type="button"
+                                  disabled={busyTeamIds.includes(ag.id)}
                                   onClick={() => void toggleTeamVisibility(ag)}
                                   aria-label={
                                     ag.is_active
@@ -4948,7 +5046,7 @@ export const OwnerDashboardPage: React.FC = () => {
                                   title={
                                     ag.is_active ? 'Visible on website' : 'Hidden'
                                   }
-                                  className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                                  className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer disabled:opacity-55"
                                 >
                                   {ag.is_active ? (
                                     <Eye className="w-4 h-4 text-emerald-500" />
@@ -4958,17 +5056,19 @@ export const OwnerDashboardPage: React.FC = () => {
                                 </button>
                                 <button
                                   type="button"
+                                  disabled={busyTeamIds.includes(ag.id) || savingTeam}
                                   onClick={() => editTeamMember(ag)}
                                   aria-label={`Edit ${ag.name}`}
-                                  className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] cursor-pointer"
+                                  className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-[var(--accent-primary)] cursor-pointer disabled:opacity-55"
                                 >
                                   <Edit3 className="w-4 h-4" />
                                 </button>
                                 <button
                                   type="button"
+                                  disabled={busyTeamIds.includes(ag.id) || savingTeam}
                                   onClick={() => requestDeleteTeamMember(ag)}
                                   aria-label={`Remove ${ag.name}`}
-                                  className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-rose-500 cursor-pointer"
+                                  className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-xl border border-[var(--border-hairline)] text-[var(--text-muted)] hover:text-rose-500 cursor-pointer disabled:opacity-55"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -5316,7 +5416,7 @@ export const OwnerDashboardPage: React.FC = () => {
                           </button>
                         </div>
                       ) : (
-                        <div className="space-y-3">
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
                           {filteredClients.map((c) => {
                             const joinedText = formatReviewDate(c.created_at);
                             const activity = clientActivityById[c.id] || {
@@ -5587,7 +5687,7 @@ const OwnerUnifiedEnquiryCard: React.FC<{
   onDelete: () => void;
   onOpen?: () => void;
   onOpenPropertyLink?: () => void;
-  onSave: (status: UnifiedEnquiryStatus, note: string) => Promise<void>;
+  onSave: (status: UnifiedEnquiryStatus, note: string) => Promise<boolean>;
 }> = ({
   type,
   name,
@@ -5749,13 +5849,26 @@ const OwnerUnifiedEnquiryCard: React.FC<{
               <button
                 key={st}
                 type="button"
+                disabled={saving}
                 aria-pressed={active}
-                onClick={() => {
+                onClick={async () => {
+                  if (saving) return;
+                  const prevStatus = status;
                   setStatus(st);
                   setIsOpen(true);
-                  void onSave(st, note);
+                  setSaving(true);
+                  try {
+                    const ok = await onSave(st, note);
+                    if (!ok) {
+                      setStatus(prevStatus);
+                    }
+                  } catch {
+                    setStatus(prevStatus);
+                  } finally {
+                    setSaving(false);
+                  }
                 }}
-                className={`min-h-[48px] px-3.5 rounded-full border text-[13px] font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${unifiedChipStyle(
+                className={`min-h-[48px] px-3.5 rounded-full border text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-60 inline-flex items-center gap-1.5 ${unifiedChipStyle(
                   st,
                   active
                 )}`}
@@ -5805,9 +5918,10 @@ const OwnerUnifiedEnquiryCard: React.FC<{
 
         <button
           type="button"
+          disabled={saving}
           onClick={onDelete}
           aria-label={`Delete ${type === 'visit' ? 'visit request' : 'enquiry'} from ${name}`}
-          className="min-h-[48px] px-4 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-sm font-semibold text-rose-500 inline-flex items-center gap-1.5 cursor-pointer"
+          className="min-h-[48px] px-4 rounded-xl border border-rose-500/30 hover:bg-rose-500/10 text-sm font-semibold text-rose-500 inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-55"
         >
           <Trash2 className="w-4 h-4" />
           <span>Delete</span>
@@ -5847,16 +5961,26 @@ const OwnerUnifiedEnquiryCard: React.FC<{
               type="button"
               disabled={saving}
               onClick={async () => {
+                if (saving) return;
                 setSaving(true);
-                await onSave(status, note);
-                setSaving(false);
-                setJustSaved(true);
-                window.setTimeout(() => setJustSaved(false), 2500);
+                try {
+                  const ok = await onSave(status, note);
+                  if (ok) {
+                    setJustSaved(true);
+                    window.setTimeout(() => setJustSaved(false), 2500);
+                  }
+                } finally {
+                  setSaving(false);
+                }
               }}
-              className="min-h-[48px] px-4 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+              className="min-h-[48px] px-4 rounded-xl bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-sm font-medium text-[var(--btn-secondary-text)] inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60 shrink-0"
             >
-              <Check className="w-4 h-4" />
-              <span>{justSaved ? 'Saved' : 'Save note'}</span>
+              {saving ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Check className="w-4 h-4" />
+              )}
+              <span>{saving ? 'Saving...' : justSaved ? 'Saved' : 'Save note'}</span>
             </button>
           </div>
         </>

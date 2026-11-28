@@ -30,6 +30,7 @@ import type { Property, PropertyFilters } from '../types/realty';
 import { PropertyCard } from '../components/PropertyCard';
 import { PropertyCardSkeleton } from '../components/PropertyCardSkeleton';
 import { BackButton } from '../components/BackButton';
+import { useDebouncedValue } from '../lib/networkUtils';
 
 interface BudgetPreset {
   id: string;
@@ -109,6 +110,11 @@ export const PropertiesPage: React.FC = () => {
   const pendingSaveAfterAuthRef = useRef(false);
   const sortRef = useRef<HTMLDivElement | null>(null);
 
+  const [searchInput, setSearchInput] = useState<string>(
+    () => searchParams.get('q') || ''
+  );
+  const debouncedSearchInput = useDebouncedValue(searchInput, 250);
+
   const [filters, setFilters] = useState<PropertyFilters>(() => ({
     query: searchParams.get('q') || '',
     location: searchParams.get('location') || 'All',
@@ -128,6 +134,14 @@ export const PropertiesPage: React.FC = () => {
   }));
 
   useEffect(() => {
+    setFilters((f) =>
+      (f.query || '') === debouncedSearchInput
+        ? f
+        : { ...f, query: debouncedSearchInput }
+    );
+  }, [debouncedSearchInput]);
+
+  useEffect(() => {
     applyDocumentMeta(
       buildSiteMetaTags({
         title: 'Properties in Siliguri — Debmalya Realty',
@@ -141,9 +155,11 @@ export const PropertiesPage: React.FC = () => {
   }, [settings]);
 
   useEffect(() => {
+    const nextQ = searchParams.get('q') || '';
+    setSearchInput(nextQ);
     setFilters((prev) => ({
       ...prev,
-      query: searchParams.get('q') || '',
+      query: nextQ,
       location: searchParams.get('location') || 'All',
       propertyType: searchParams.get('category') || 'All',
       listingType:
@@ -239,16 +255,22 @@ export const PropertiesPage: React.FC = () => {
     };
   }, [moreFiltersOpen]);
 
+  const safeProperties = useMemo(
+    () => (Array.isArray(properties) ? properties : []),
+    [properties]
+  );
+
   const filtered = useMemo(
     () =>
-      filterAndSortProperties(properties, filters, {
+      filterAndSortProperties(safeProperties, filters, {
         publicOnly: true,
         allowClosedInAll: false,
       }),
-    [properties, filters]
+    [safeProperties, filters]
   );
 
   const resetFilters = () => {
+    setSearchInput('');
     setFilters({
       query: '',
       location: 'All',
@@ -306,13 +328,16 @@ export const PropertiesPage: React.FC = () => {
     }));
   };
 
-  const locations = settings?.locations || [
-    'Siliguri',
-    'Sevoke Road',
-    'Bhanu Nagar',
-    'Haiderpara',
-    'Gugni More',
-  ];
+  const locations =
+    Array.isArray(settings?.locations) && settings.locations.length > 0
+      ? settings.locations
+      : [
+          'Siliguri',
+          'Sevoke Road',
+          'Bhanu Nagar',
+          'Haiderpara',
+          'Gugni More',
+        ];
 
   const moreFiltersCount =
     (filters.minBedrooms !== '' ? 1 : 0) +
@@ -328,7 +353,10 @@ export const PropertiesPage: React.FC = () => {
     activeChips.push({
       key: 'query',
       label: `Search: "${filters.query.trim()}"`,
-      onRemove: () => setFilters((f) => ({ ...f, query: '' })),
+      onRemove: () => {
+        setSearchInput('');
+        setFilters((f) => ({ ...f, query: '' }));
+      },
     });
   }
 
@@ -464,7 +492,10 @@ export const PropertiesPage: React.FC = () => {
   const handleSaveSearchClick = () => {
     if (!user) {
       pendingSaveAfterAuthRef.current = true;
-      openAuthModal('login');
+      openAuthModal('login', {
+        notice: 'Sign in to save this search',
+        suppressRedirect: true,
+      });
       return;
     }
     void performSaveSearch();
@@ -509,18 +540,19 @@ export const PropertiesPage: React.FC = () => {
             <input
               id="filter-q"
               type="text"
-              value={filters.query || ''}
-              onChange={(e) =>
-                setFilters((f) => ({ ...f, query: e.target.value }))
-              }
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               aria-label="Search area or property"
               placeholder="Search area or property"
               className="w-full min-h-[44px] pl-10 pr-12 rounded-full border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base font-medium text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
             />
-            {filters.query && (
+            {searchInput && (
               <button
                 type="button"
-                onClick={() => setFilters((f) => ({ ...f, query: '' }))}
+                onClick={() => {
+                  setSearchInput('');
+                  setFilters((f) => ({ ...f, query: '' }));
+                }}
                 aria-label="Clear search"
                 className="absolute right-0.5 top-1/2 -translate-y-1/2 h-11 w-11 inline-flex items-center justify-center rounded-full text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
               >

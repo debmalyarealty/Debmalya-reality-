@@ -1,10 +1,9 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { AuthModal } from './components/AuthModal';
-import { FirstVisitSignInPrompt } from './components/FirstVisitSignInPrompt';
 import { DashboardCoachmark } from './components/DashboardCoachmark';
 import { MobileFloatingActions } from './components/MobileFloatingActions';
 import { OfflineBanner } from './components/OfflineBanner';
@@ -15,8 +14,10 @@ import { CustomerDashboardPage } from './pages/CustomerDashboardPage';
 import { OwnerAuthPage } from './pages/OwnerAuthPage';
 import { OwnerDashboardPage } from './pages/OwnerDashboardPage';
 import { LegalPage } from './pages/LegalPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+import { motion, useReducedMotion } from 'motion/react';
 
-import { recordNavigationEntry } from './lib/motion';
+import { LUX_EASE, recordNavigationEntry } from './lib/motion';
 
 const ScrollToTop: React.FC = () => {
   const { pathname, hash } = useLocation();
@@ -72,6 +73,34 @@ const AuthRedirectObserver: React.FC = () => {
   }, [pendingAuthRedirect, clearPendingAuthRedirect, navigate]);
 
   return null;
+};
+
+const AnimatedRoutes: React.FC = () => {
+  const location = useLocation();
+  const prefersReduced = !!useReducedMotion();
+
+  return (
+    <motion.div
+      key={location.pathname}
+      initial={prefersReduced ? false : { opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: prefersReduced ? 0.01 : 0.24, ease: LUX_EASE }}
+    >
+      <Routes location={location}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/properties" element={<PropertiesPage />} />
+        <Route path="/properties/:slug" element={<PropertyDetailPage />} />
+        <Route path="/my-account" element={<CustomerDashboardPage />} />
+        <Route path="/owner-login" element={<OwnerAuthPage />} />
+        <Route path="/owner-dashboard" element={<OwnerDashboardPage />} />
+        <Route path="/owner-login/dashboard" element={<OwnerDashboardPage />} />
+        <Route path="/privacy-policy" element={<LegalPage type="privacy" />} />
+        <Route path="/terms" element={<LegalPage type="terms" />} />
+        <Route path="/disclaimer" element={<LegalPage type="disclaimer" />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </motion.div>
+  );
 };
 
 class AppErrorBoundary extends React.Component<
@@ -147,23 +176,10 @@ export default function App() {
             <Navbar />
             <OfflineBanner />
             <div className="flex-1">
-              <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/properties" element={<PropertiesPage />} />
-                <Route path="/properties/:slug" element={<PropertyDetailPage />} />
-                <Route path="/my-account" element={<CustomerDashboardPage />} />
-                <Route path="/owner-login" element={<OwnerAuthPage />} />
-                <Route path="/owner-dashboard" element={<OwnerDashboardPage />} />
-                <Route path="/owner-login/dashboard" element={<OwnerDashboardPage />} />
-                <Route path="/privacy-policy" element={<LegalPage type="privacy" />} />
-                <Route path="/terms" element={<LegalPage type="terms" />} />
-                <Route path="/disclaimer" element={<LegalPage type="disclaimer" />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
+              <AnimatedRoutes />
             </div>
             <Footer />
             <MobileFloatingActions />
-            <FirstVisitSignInPrompt />
             <DashboardCoachmark />
             <AuthModal />
           </div>

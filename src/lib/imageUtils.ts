@@ -8,6 +8,8 @@ export interface ResponsiveImageSources {
 export const MAX_INPUT_IMAGE_BYTES = 15 * 1024 * 1024; // 15 MB
 export const MAX_UPLOADED_IMAGE_BYTES = 500 * 1024; // 500 KB
 export const MAX_PROPERTY_PHOTOS = 20;
+export const FALLBACK_IMAGE =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 500'%3E%3Crect width='800' height='500' fill='%23EAE5DC'/%3E%3Cpath d='M180 370V215l120-85 120 85v155H180zm240 0V165l100-55 100 55v205H420z' fill='%23C9A96E' fill-opacity='0.38'/%3E%3C/svg%3E";
 
 export interface CompressedImageResult {
   file: File;

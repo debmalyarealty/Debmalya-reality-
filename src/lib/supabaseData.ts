@@ -24,9 +24,12 @@ import {
 } from './adminHelpers';
 import {
   assertOnline,
+  extractHttpAuthError,
   isBrowserOffline,
+  isNetworkFailureError,
   notifySessionExpired,
   OFFLINE_ERROR_MESSAGE,
+  toSupabaseActionError,
   toUserFriendlyNetworkError,
   TransientSessionError,
   withRetryOnce,
@@ -101,6 +104,19 @@ function requireClient() {
     throw new Error(BACKEND_NOT_CONFIGURED_MESSAGE);
   }
   return supabase;
+}
+
+function throwIfSupabaseError(
+  error: unknown,
+  fallback: string,
+  useFriendlyFormatter = false
+): void {
+  if (!error) return;
+  throw toSupabaseActionError(
+    error,
+    fallback,
+    useFriendlyFormatter ? formatFriendlyActionError : undefined
+  );
 }
 
 class QueryTimeoutError extends Error {
@@ -426,9 +442,47 @@ export async function getCurrentSessionProfile(): Promise<UserProfile | null> {
   try {
     profile = await withRetryOnce(fetchProfileRow);
   } catch (err) {
-    throw new TransientSessionError(
-      err instanceof Error ? err.message : 'Could not verify profile right now'
-    );
+    const authErr = extractHttpAuthError(err);
+    const lowerMsg =
+      err instanceof Error
+        ? err.message.toLowerCase()
+        : String((err as { message?: unknown } | null)?.message || '').toLowerCase();
+    const looksLike401 = authErr?.status === 401 || lowerMsg.includes('jwt expired');
+    if (looksLike401) {
+      try {
+        const { data: refreshed, error: refreshErr } = await supabase!.auth.refreshSession();
+        if (refreshErr) {
+          const refreshAuthErr = extractHttpAuthError(refreshErr);
+          if (refreshAuthErr?.status === 401) {
+            notifySessionExpired(refreshAuthErr.message);
+            return null;
+          }
+          if (isNetworkFailureError(refreshErr) || isBrowserOffline()) {
+            throw new TransientSessionError(OFFLINE_ERROR_MESSAGE);
+          }
+        }
+        if (refreshed?.session?.user) {
+          profile = await withRetryOnce(fetchProfileRow);
+        } else {
+          notifySessionExpired(authErr?.message || 'Your session expired. Please sign in again.');
+          return null;
+        }
+      } catch (retryErr) {
+        if (retryErr instanceof TransientSessionError) throw retryErr;
+        const retryAuthErr = extractHttpAuthError(retryErr);
+        if (retryAuthErr?.status === 401) {
+          notifySessionExpired(retryAuthErr.message);
+          return null;
+        }
+        throw new TransientSessionError(
+          retryErr instanceof Error ? retryErr.message : 'Could not verify profile right now'
+        );
+      }
+    } else {
+      throw new TransientSessionError(
+        err instanceof Error ? err.message : 'Could not verify profile right now'
+      );
+    }
   }
 
   // Retry once shortly if auth signup trigger just fired
@@ -437,6 +491,11 @@ export async function getCurrentSessionProfile(): Promise<UserProfile | null> {
     try {
       profile = await fetchProfileRow();
     } catch (err) {
+      const authErr = extractHttpAuthError(err);
+      if (authErr?.status === 401) {
+        notifySessionExpired(authErr.message);
+        return null;
+      }
       throw new TransientSessionError(
         err instanceof Error ? err.message : 'Could not verify profile right now'
       );
@@ -610,16 +669,9 @@ export async function updateOwnPassword(newPassword: string): Promise<void> {
   const client = requireClient();
   try {
     const { error } = await client.auth.updateUser({ password: newPassword });
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not update password. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not update password. Please try again.', true);
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not update password. Please try again.');
+    throw toSupabaseActionError(err, 'Could not update password. Please try again.');
   }
 }
 
@@ -653,14 +705,14 @@ export async function updateOwnProfile(
         city: payload.city.trim() || 'Siliguri',
       })
       .eq('id', userId);
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Unable to update profile. Please try again.');
 
     invalidateDashboardCaches();
     const refreshed = await getCurrentSessionProfile();
     if (!refreshed) throw new Error('Unable to reload updated profile.');
     return refreshed;
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Unable to update profile. Please try again.');
+    throw toSupabaseActionError(err, 'Unable to update profile. Please try again.');
   }
 }
 
@@ -989,10 +1041,10 @@ export async function submitInquiry(params: {
       const { is_read: _omit, ...fallback } = payload;
       ({ error } = await client.from('inquiries').insert(fallback));
     }
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not submit inquiry. Please try again.');
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not submit inquiry. Please try again.');
+    throw toSupabaseActionError(err, 'Could not submit inquiry. Please try again.');
   }
 }
 
@@ -1020,10 +1072,10 @@ export async function submitBooking(params: {
       note: params.note.trim(),
       status: 'pending',
     });
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not schedule site visit. Please try again.');
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not schedule site visit. Please try again.');
+    throw toSupabaseActionError(err, 'Could not schedule site visit. Please try again.');
   }
 }
 
@@ -1047,10 +1099,10 @@ export async function submitReview(params: {
       text: params.text.trim(),
       status: 'pending',
     });
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not submit review. Please try again.');
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not submit review. Please try again.');
+    throw toSupabaseActionError(err, 'Could not submit review. Please try again.');
   }
 }
 
@@ -1084,10 +1136,10 @@ export async function addUserFavorite(
         { user_id: userId, property_id: propertyId },
         { onConflict: 'user_id,property_id' }
       );
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Unable to save property.');
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Unable to save property.');
+    throw toSupabaseActionError(err, 'Unable to save property.');
   }
 }
 
@@ -1103,10 +1155,10 @@ export async function removeUserFavorite(
       .delete()
       .eq('user_id', userId)
       .eq('property_id', propertyId);
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Unable to update saved properties.');
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Unable to update saved properties.');
+    throw toSupabaseActionError(err, 'Unable to update saved properties.');
   }
 }
 
@@ -1192,12 +1244,12 @@ export async function saveUserPreferences(
     const { error } = await client
       .from('customer_preferences')
       .upsert(payload, { onConflict: 'user_id' });
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not save preferences. Please try again.');
     writeCache(userPreferencesCacheKey(userId), payload);
     invalidateDashboardCaches();
     return payload;
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not save preferences. Please try again.');
+    throw toSupabaseActionError(err, 'Could not save preferences. Please try again.');
   }
 }
 
@@ -1209,10 +1261,11 @@ export async function saveUserSearch(
   const client = requireClient();
   try {
     // Deduplicate identical criteria for this user cleanly
-    const { data: existingRows } = await client
+    const { data: existingRows, error: existingErr } = await client
       .from('saved_searches')
       .select('*')
       .eq('user_id', userId);
+    throwIfSupabaseError(existingErr, 'Could not save search. Please try again.');
 
     const match = (existingRows || []).find(
       (r) =>
@@ -1263,7 +1316,7 @@ export async function saveUserSearch(
       })
       .select()
       .single();
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not save search. Please try again.');
     invalidateDashboardCaches();
 
     return {
@@ -1282,7 +1335,7 @@ export async function saveUserSearch(
       created_at: String(data.created_at),
     };
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not save search. Please try again.');
+    throw toSupabaseActionError(err, 'Could not save search. Please try again.');
   }
 }
 
@@ -1298,10 +1351,10 @@ export async function removeSavedSearchById(
       .delete()
       .eq('id', id)
       .eq('user_id', userId);
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not remove saved search. Please try again.');
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not remove saved search. Please try again.');
+    throw toSupabaseActionError(err, 'Could not remove saved search. Please try again.');
   }
 }
 
@@ -1376,10 +1429,11 @@ export async function fetchClientDashboardData(
         'Client dashboard'
       );
 
-      if (favRes.error) throw new Error(favRes.error.message);
-      if (bookRes.error) throw new Error(bookRes.error.message);
-      if (inqRes.error) throw new Error(inqRes.error.message);
-      if (revRes.error) throw new Error(revRes.error.message);
+      throwIfSupabaseError(favRes.error, 'Could not load your account data. Please try again.');
+      throwIfSupabaseError(searchRes.error, 'Could not load your account data. Please try again.');
+      throwIfSupabaseError(bookRes.error, 'Could not load your account data. Please try again.');
+      throwIfSupabaseError(inqRes.error, 'Could not load your account data. Please try again.');
+      throwIfSupabaseError(revRes.error, 'Could not load your account data. Please try again.');
 
       const favorites = (favRes.data || [])
         .map((row) => row.properties as unknown as Record<string, unknown> | null)
@@ -1458,6 +1512,11 @@ export async function uploadStorageImage(
     });
 
     if (error) {
+      const authErr = extractHttpAuthError(error);
+      if (authErr) {
+        if (authErr.status === 401) notifySessionExpired(authErr.message);
+        throw Object.assign(new Error(authErr.message), { status: authErr.status });
+      }
       const detail = error.message ? ` (${error.message})` : '';
       throw new Error(`Could not upload photo to ${bucket}${detail}. Please try again.`);
     }
@@ -1468,7 +1527,7 @@ export async function uploadStorageImage(
     }
     return data.publicUrl;
   } catch (err) {
-    throw toUserFriendlyNetworkError(
+    throw toSupabaseActionError(
       err,
       `Could not upload photo to ${bucket}. Please try again.`
     );
@@ -1554,13 +1613,13 @@ export async function fetchOwnerDashboardData(
           'Owner dashboard'
         );
 
-      if (propRes.error) throw new Error(propRes.error.message);
-      if (inqRes.error) throw new Error(inqRes.error.message);
-      if (bookRes.error) throw new Error(bookRes.error.message);
-      if (revRes.error) throw new Error(revRes.error.message);
-      if (teamRes.error) throw new Error(teamRes.error.message);
-      if (setRes.error) throw new Error(setRes.error.message);
-      if (profRes.error) throw new Error(profRes.error.message);
+      throwIfSupabaseError(propRes.error, 'Could not load dashboard data. Please try again.');
+      throwIfSupabaseError(inqRes.error, 'Could not load dashboard data. Please try again.');
+      throwIfSupabaseError(bookRes.error, 'Could not load dashboard data. Please try again.');
+      throwIfSupabaseError(revRes.error, 'Could not load dashboard data. Please try again.');
+      throwIfSupabaseError(teamRes.error, 'Could not load dashboard data. Please try again.');
+      throwIfSupabaseError(setRes.error, 'Could not load dashboard data. Please try again.');
+      throwIfSupabaseError(profRes.error, 'Could not load dashboard data. Please try again.');
 
       const favoriteCounts: Record<string, number> = {};
       const savedByClientId: Record<string, string[]> = {};
@@ -1646,7 +1705,7 @@ export async function fetchOwnerDashboardData(
     }
     return payload;
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not load dashboard data. Please try again.');
+    throw toSupabaseActionError(err, 'Could not load dashboard data. Please try again.');
   }
 }
 
@@ -1750,14 +1809,14 @@ export async function ownerSaveProperty(
       }
     }
 
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not save property. Please try again.');
     savedId = data?.id ? String(data.id) : savedId;
     savedSlug = data?.slug ? String(data.slug) : savedSlug;
     invalidatePublicCaches();
     invalidateDashboardCaches();
     return { id: savedId, slug: savedSlug };
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not save property. Please try again.');
+    throw toSupabaseActionError(err, 'Could not save property. Please try again.');
   }
 }
 
@@ -1772,11 +1831,11 @@ export async function ownerTogglePropertyPublished(
       .from('properties')
       .update({ is_published: isPublished })
       .eq('id', id);
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not update listing visibility.');
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not update listing visibility.');
+    throw toSupabaseActionError(err, 'Could not update listing visibility.');
   }
 }
 
@@ -1790,16 +1849,9 @@ async function removeStorageUrlsFromBucket(
   const client = requireClient();
   try {
     const { error } = await client.storage.from(bucket).remove(paths);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete property photos. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete property photos. Please try again.', true);
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete property photos. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete property photos. Please try again.');
   }
 }
 
@@ -1814,18 +1866,11 @@ export async function ownerDeleteProperty(
       await removeStorageUrlsFromBucket('property-images', imageUrls);
     }
     const { error } = await client.from('properties').delete().eq('id', id);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete property. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete property. Please try again.', true);
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete property. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete property. Please try again.');
   }
 }
 
@@ -1842,18 +1887,11 @@ export async function ownerDeletePropertiesBulk(
     }
     const ids = items.map((item) => item.id);
     const { error } = await client.from('properties').delete().in('id', ids);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete selected properties. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete selected properties. Please try again.', true);
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete selected properties. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete selected properties. Please try again.');
   }
 }
 
@@ -1862,17 +1900,10 @@ export async function ownerDeleteInquiry(id: string): Promise<void> {
   const client = requireClient();
   try {
     const { error } = await client.from('inquiries').delete().eq('id', id);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete enquiry. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete enquiry. Please try again.', true);
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete enquiry. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete enquiry. Please try again.');
   }
 }
 
@@ -1887,17 +1918,10 @@ export async function ownerDeleteInquiriesBulk(
       .from('inquiries')
       .delete()
       .in('id', [...ids]);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete selected enquiries. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete selected enquiries. Please try again.', true);
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete selected enquiries. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete selected enquiries. Please try again.');
   }
 }
 
@@ -1906,17 +1930,10 @@ export async function ownerDeleteBooking(id: string): Promise<void> {
   const client = requireClient();
   try {
     const { error } = await client.from('bookings').delete().eq('id', id);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete visit request. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete visit request. Please try again.', true);
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete visit request. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete visit request. Please try again.');
   }
 }
 
@@ -1931,17 +1948,10 @@ export async function ownerDeleteBookingsBulk(
       .from('bookings')
       .delete()
       .in('id', [...ids]);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete selected visit requests. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete selected visit requests. Please try again.', true);
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete selected visit requests. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete selected visit requests. Please try again.');
   }
 }
 
@@ -1955,11 +1965,11 @@ export async function ownerMarkInquiryRead(id: string): Promise<void> {
       .update({ is_read: true })
       .eq('id', id);
     if (error && !isMissingColumnError(error, 'is_read')) {
-      throw new Error(error.message);
+      throwIfSupabaseError(error, 'Could not mark enquiry as read.');
     }
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not mark enquiry as read.');
+    throw toSupabaseActionError(err, 'Could not mark enquiry as read.');
   }
 }
 
@@ -1982,10 +1992,10 @@ export async function ownerUpdateInquiry(
         .update({ status, owner_notes: ownerNotes })
         .eq('id', id));
     }
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not update enquiry. Please try again.');
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not update enquiry. Please try again.');
+    throw toSupabaseActionError(err, 'Could not update enquiry. Please try again.');
   }
 }
 
@@ -2001,10 +2011,10 @@ export async function ownerUpdateBooking(
       .from('bookings')
       .update({ status, owner_note: ownerNote })
       .eq('id', id);
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not update site visit. Please try again.');
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not update site visit. Please try again.');
+    throw toSupabaseActionError(err, 'Could not update site visit. Please try again.');
   }
 }
 
@@ -2016,11 +2026,11 @@ export async function ownerUpdateReview(
   const client = requireClient();
   try {
     const { error } = await client.from('reviews').update(patch).eq('id', id);
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not update review. Please try again.');
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not update review. Please try again.');
+    throw toSupabaseActionError(err, 'Could not update review. Please try again.');
   }
 }
 
@@ -2029,18 +2039,11 @@ export async function ownerDeleteReview(id: string): Promise<void> {
   const client = requireClient();
   try {
     const { error } = await client.from('reviews').delete().eq('id', id);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete review. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete review. Please try again.', true);
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete review. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete review. Please try again.');
   }
 }
 
@@ -2055,18 +2058,11 @@ export async function ownerDeleteReviewsBulk(
       .from('reviews')
       .delete()
       .in('id', [...ids]);
-    if (error) {
-      throw new Error(
-        formatFriendlyActionError(
-          error.message,
-          'Could not delete selected reviews. Please try again.'
-        )
-      );
-    }
+    throwIfSupabaseError(error, 'Could not delete selected reviews. Please try again.', true);
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete selected reviews. Please try again.');
+    throw toSupabaseActionError(err, 'Could not delete selected reviews. Please try again.');
   }
 }
 
@@ -2151,10 +2147,11 @@ async function invokeAdminClientFunction<T = Record<string, unknown>>(
     if (status === 401) {
       const exact401 = detailedMsg || errorMessage || 'Your session expired. Please sign in again.';
       notifySessionExpired(exact401);
-      throw new Error(exact401);
+      throw Object.assign(new Error(exact401), { status: 401 });
     }
     if (status === 403) {
-      throw new Error(detailedMsg || errorMessage || 'Only the owner account can do this.');
+      const exact403 = detailedMsg || errorMessage || 'Only the owner account can do this.';
+      throw Object.assign(new Error(exact403), { status: 403 });
     }
 
     if (!detailedMsg && status >= 400) {
@@ -2167,9 +2164,16 @@ async function invokeAdminClientFunction<T = Record<string, unknown>>(
   }
 
   if (data && typeof data === 'object' && 'error' in data && data.error) {
-    throw new Error(
-      formatFriendlyActionError(String(data.error), fallbackError)
-    );
+    const dataStatus = Number((data as { status?: unknown }).status || 0);
+    const errText = String(data.error);
+    if (dataStatus === 401) {
+      notifySessionExpired(errText);
+      throw Object.assign(new Error(errText), { status: 401 });
+    }
+    if (dataStatus === 403) {
+      throw Object.assign(new Error(errText), { status: 403 });
+    }
+    throw new Error(formatFriendlyActionError(errText, fallbackError));
   }
 
   return (data ?? {}) as T;
@@ -2306,9 +2310,11 @@ export async function ownerDeleteClientsBulk(
     invalidateDashboardCaches();
     return Array.isArray(res.deletedIds) ? res.deletedIds : [...clientIds];
   } catch (edgeErr) {
+    const edgeStatus = (edgeErr as { status?: number } | null)?.status;
     const edgeMessage =
       edgeErr instanceof Error ? edgeErr.message.toLowerCase() : '';
     if (
+      edgeStatus === 401 ||
       edgeMessage.includes('no internet') ||
       edgeMessage.includes('session expired') ||
       edgeMessage.includes('jwt') ||
@@ -2395,15 +2401,15 @@ export async function ownerSaveTeamMember(
         .from('team_members')
         .update(payload)
         .eq('id', editingId);
-      if (error) throw new Error(error.message);
+      throwIfSupabaseError(error, 'Could not save team member. Please try again.');
     } else {
       const { error } = await client.from('team_members').insert(payload);
-      if (error) throw new Error(error.message);
+      throwIfSupabaseError(error, 'Could not save team member. Please try again.');
     }
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not save team member. Please try again.');
+    throw toSupabaseActionError(err, 'Could not save team member. Please try again.');
   }
 }
 
@@ -2418,11 +2424,11 @@ export async function ownerToggleTeamMemberVisibility(
       .from('team_members')
       .update({ is_visible: isVisible })
       .eq('id', id);
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not update advisor visibility.');
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not update advisor visibility.');
+    throw toSupabaseActionError(err, 'Could not update advisor visibility.');
   }
 }
 
@@ -2431,11 +2437,11 @@ export async function ownerDeleteTeamMember(id: string): Promise<void> {
   const client = requireClient();
   try {
     const { error } = await client.from('team_members').delete().eq('id', id);
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not delete team member.');
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not delete team member.');
+    throw toSupabaseActionError(err, 'Could not delete team member.');
   }
 }
 
@@ -2474,10 +2480,10 @@ export async function ownerSaveSiteSettings(
       },
       { onConflict: 'id' }
     );
-    if (error) throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not save website settings. Please try again.');
     invalidatePublicCaches();
     invalidateDashboardCaches();
   } catch (err) {
-    throw toUserFriendlyNetworkError(err, 'Could not save website settings. Please try again.');
+    throw toSupabaseActionError(err, 'Could not save website settings. Please try again.');
   }
 }

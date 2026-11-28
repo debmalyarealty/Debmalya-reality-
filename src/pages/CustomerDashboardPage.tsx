@@ -136,12 +136,15 @@ export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
     user,
     authLoading,
     settings,
+    openAuthModal,
     refreshUser,
     showToast,
     logout,
   } = useApp();
   const navigate = useNavigate();
   const prefersReduced = !!useReducedMotion();
+  const manualSignOutRef = useRef(false);
+  const promptedDashboardAuthRef = useRef(false);
 
   const isOwnerMode = Boolean(
     isOwnerViewing && viewedProfile && user?.role === 'owner'
@@ -264,11 +267,13 @@ export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
   }, [isOwnerMode, viewedProfile?.id]);
 
   const applyClientData = (dashboardData: ClientDashboardData) => {
-    setFavorites(dashboardData.favorites);
-    setBookings(dashboardData.bookings);
-    setInquiries(dashboardData.inquiries);
-    setReviews(dashboardData.reviews);
-    setPrefs(dashboardData.preferences);
+    setFavorites(Array.isArray(dashboardData?.favorites) ? dashboardData.favorites : []);
+    setBookings(Array.isArray(dashboardData?.bookings) ? dashboardData.bookings : []);
+    setInquiries(Array.isArray(dashboardData?.inquiries) ? dashboardData.inquiries : []);
+    setReviews(Array.isArray(dashboardData?.reviews) ? dashboardData.reviews : []);
+    if (dashboardData?.preferences) {
+      setPrefs(dashboardData.preferences);
+    }
   };
 
   const loadClientData = async (uid: string, force = false) => {
@@ -315,6 +320,26 @@ export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
     }
   }, [targetProfile?.id, isOwnerMode, authLoading]);
 
+  useEffect(() => {
+    if (
+      !authLoading &&
+      !user &&
+      !isOwnerMode &&
+      !manualSignOutRef.current &&
+      !promptedDashboardAuthRef.current
+    ) {
+      promptedDashboardAuthRef.current = true;
+      openAuthModal('login', {
+        notice: 'Sign in to open your client dashboard',
+        suppressRedirect: true,
+      });
+    }
+    if (user) {
+      promptedDashboardAuthRef.current = false;
+      manualSignOutRef.current = false;
+    }
+  }, [authLoading, user, isOwnerMode, openAuthModal]);
+
   if (authLoading) {
     return (
       <main className="fluid-container pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)]">
@@ -324,7 +349,38 @@ export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
   }
 
   if (!user) {
-    return <Navigate to="/" replace />;
+    return (
+      <main className="fluid-container pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] min-h-[75svh] flex items-center justify-center">
+        <div className="max-w-md w-full rounded-[clamp(1.25rem,3vw,1.75rem)] border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-[clamp(1.5rem,4vw,2rem)] shadow-[var(--shadow-subtle)] text-center space-y-4">
+          <h1 className="font-display text-2xl sm:text-3xl font-semibold text-[var(--text-primary)]">
+            Client dashboard
+          </h1>
+          <p className="text-sm sm:text-base text-[var(--text-secondary)] leading-relaxed">
+            Sign in or create a free account to view your saved properties, site visit requests, and enquiries.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+            <button
+              type="button"
+              onClick={() =>
+                openAuthModal('login', {
+                  notice: 'Sign in to open your client dashboard',
+                  suppressRedirect: true,
+                })
+              }
+              className="btn-primary-lux flex-1 min-h-[48px] px-5 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] text-sm font-semibold cursor-pointer"
+            >
+              Sign in / Create account
+            </button>
+            <Link
+              to="/"
+              className="min-h-[48px] px-5 py-2.5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] text-sm font-medium inline-flex items-center justify-center"
+            >
+              Back to home
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   if (!isOwnerMode && user.role === 'owner') {
@@ -563,6 +619,7 @@ export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
             <button
               type="button"
               onClick={async () => {
+                manualSignOutRef.current = true;
                 await logout();
                 navigate('/', { replace: true });
               }}
@@ -689,7 +746,7 @@ export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
                   </Link>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
                   {bookings.map((b) => (
                     <div
                       key={b.id}
@@ -756,7 +813,7 @@ export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
                   </Link>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
                   {inquiries.map((inq) => (
                     <div
                       key={inq.id}
@@ -829,7 +886,7 @@ export const CustomerDashboardPage: React.FC<CustomerDashboardPageProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
                   {reviews.map((rev) => (
                     <div
                       key={rev.id}

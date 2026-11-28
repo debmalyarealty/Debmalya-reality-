@@ -22,7 +22,9 @@ import {
   updateOwnPassword,
 } from '../lib/supabaseData';
 import { mapSignInAuthError } from '../lib/authCallback';
+import { isValidEmail, isValidPhone } from '../lib/realtyLogic';
 import { useKeyboardSafeForm } from '../lib/formKeyboard';
+import { toUserFriendlyNetworkError } from '../lib/networkUtils';
 import { LUX_EASE } from '../lib/motion';
 
 export const AuthModal: React.FC = () => {
@@ -104,17 +106,17 @@ export const AuthModal: React.FC = () => {
     setResending(true);
     try {
       await resendSignupVerificationEmail(email);
-      setStatusMsg(
-        'Verification email sent. Please check your inbox and spam folder.'
-      );
+      const sentMsg =
+        'Verification email sent. Please check your inbox and spam folder.';
+      setStatusMsg(sentMsg);
+      showToast(sentMsg, 'info');
     } catch (err) {
-      const normalized =
-        err instanceof Error && err.message.toLowerCase().includes('no internet')
-          ? err.message
-          : err instanceof Error
-          ? err.message
-          : 'Unable to resend verification email right now.';
+      const normalized = toUserFriendlyNetworkError(
+        err,
+        'Unable to resend verification email right now.'
+      ).message;
       setError(normalized);
+      showToast(normalized, 'error');
       setErrorShakeKey((k) => k + 1);
     } finally {
       setResending(false);
@@ -131,13 +133,19 @@ export const AuthModal: React.FC = () => {
 
     try {
       if (mode === 'login') {
+        if (!isValidEmail(email)) {
+          throw new Error('Please enter a valid email address.');
+        }
+        if (!password) {
+          throw new Error('Please enter your password.');
+        }
         const profile = await signInWithEmail(email, password);
         await refreshUser();
         const override = consumeAuthSuccessOverride();
         showToast(`Welcome back, ${profile.full_name || 'friend'}`, 'info');
         handleDismiss();
         if (override.onSuccess) {
-          override.onSuccess();
+          await override.onSuccess(profile);
         }
         if (!override.suppressRedirect) {
           if (profile.role === 'owner') {
@@ -148,6 +156,18 @@ export const AuthModal: React.FC = () => {
           }
         }
       } else if (mode === 'register') {
+        if (fullName.trim().length < 2) {
+          throw new Error('Please enter your full name (at least 2 characters).');
+        }
+        if (!isValidPhone(phone)) {
+          throw new Error('Please enter a valid 10-digit phone number.');
+        }
+        if (!isValidEmail(email)) {
+          throw new Error('Please enter a valid email address.');
+        }
+        if (password.length < 6) {
+          throw new Error('Password must be at least 6 characters.');
+        }
         const res = await signUpWithEmail({
           email,
           password,
@@ -160,13 +180,14 @@ export const AuthModal: React.FC = () => {
           setStatusMsg(null);
           setError(null);
           setMode('verify-sent');
+          showToast('Check your email to verify your account', 'info');
         } else {
-          const profile = await refreshUser();
+          const profile = (await refreshUser()) ?? res.profile;
           const override = consumeAuthSuccessOverride();
           showToast('Account created successfully', 'info');
           handleDismiss();
-          if (override.onSuccess) {
-            override.onSuccess();
+          if (override.onSuccess && profile) {
+            await override.onSuccess(profile);
           }
           if (!override.suppressRedirect) {
             if (profile?.role === 'owner') {
@@ -178,11 +199,18 @@ export const AuthModal: React.FC = () => {
           }
         }
       } else if (mode === 'forgot') {
+        if (!isValidEmail(email)) {
+          throw new Error('Please enter a valid email address.');
+        }
         await sendPasswordResetEmail(email);
         setStatusMsg(
           'Password reset link sent. Please check your inbox and follow the link to choose a new password.'
         );
+        showToast('Password reset link sent to your email', 'info');
       } else if (mode === 'recovery') {
+        if (newPassword.length < 6) {
+          throw new Error('New password must be at least 6 characters.');
+        }
         await updateOwnPassword(newPassword);
         const profile = await refreshUser();
         setNewPassword('');
@@ -194,14 +222,17 @@ export const AuthModal: React.FC = () => {
         }
       }
     } catch (err) {
+      let friendlyMsg = 'Authentication failed.';
       if (mode === 'login') {
         const rawMsg = err instanceof Error ? err.message : '';
-        setError(mapSignInAuthError(rawMsg));
+        friendlyMsg = mapSignInAuthError(rawMsg);
         setShakePassword(true);
       } else {
-        setError(err instanceof Error ? err.message : 'Authentication failed.');
+        friendlyMsg = err instanceof Error ? err.message : 'Authentication failed.';
       }
+      setError(friendlyMsg);
       setErrorShakeKey((k) => k + 1);
+      showToast(friendlyMsg, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -248,7 +279,7 @@ export const AuthModal: React.FC = () => {
                   className="group min-h-[44px] inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition-colors cursor-pointer"
                 >
                   <ArrowLeft className="w-3.5 h-3.5 transition-transform duration-200 group-hover:-translate-x-0.5" />
-                  <span>Back to Log in</span>
+                  <span>Back to Sign in</span>
                 </button>
               ) : (
                 <span />
@@ -274,6 +305,20 @@ export const AuthModal: React.FC = () => {
                 <button
                   type="button"
                   role="tab"
+                  aria-selected={mode === 'login'}
+                  onClick={() => switchMode('login')}
+                  className={`min-h-[44px] px-2.5 py-2 rounded-lg text-[13px] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                    mode === 'login'
+                      ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] font-medium border border-[var(--border-hairline)] shadow-xs'
+                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-normal'
+                  }`}
+                >
+                  <LogIn className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span className="truncate">Sign in</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
                   aria-selected={mode === 'register'}
                   onClick={() => switchMode('register')}
                   className={`min-h-[44px] px-2.5 py-2 rounded-lg text-[13px] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
@@ -284,20 +329,6 @@ export const AuthModal: React.FC = () => {
                 >
                   <UserPlus className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span className="truncate">Create account</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={mode === 'login'}
-                  onClick={() => switchMode('login')}
-                  className={`min-h-[44px] px-2.5 py-2 rounded-lg text-[13px] inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                    mode === 'login'
-                      ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] font-medium border border-[var(--border-hairline)] shadow-xs'
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-normal'
-                  }`}
-                >
-                  <LogIn className="w-4 h-4 shrink-0" aria-hidden="true" />
-                  <span className="truncate">Log in</span>
                 </button>
               </div>
             )}
@@ -358,7 +389,7 @@ export const AuthModal: React.FC = () => {
                     onClick={() => switchMode('login')}
                     className="w-full min-h-[44px] py-2 text-center text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:underline cursor-pointer"
                   >
-                    Back to Log in
+                    Back to Sign in
                   </button>
                 </div>
               </div>
@@ -434,7 +465,7 @@ export const AuthModal: React.FC = () => {
                   onClick={() => switchMode('login')}
                   className="w-full min-h-[44px] py-2 text-center text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:underline cursor-pointer"
                 >
-                  Back to Log in
+                  Back to Sign in
                 </button>
 
                 <div aria-hidden="true" className={keyboardOpen ? 'h-[26dvh]' : 'hidden'} />
@@ -443,25 +474,31 @@ export const AuthModal: React.FC = () => {
               <>
                 <h2 className="font-display text-[clamp(1.65rem,4vw,2rem)] font-medium text-[var(--text-primary)]">
                   {mode === 'login'
-                    ? 'Log in'
+                    ? 'Sign in'
                     : mode === 'register'
                     ? 'Create account'
                     : mode === 'recovery'
                     ? 'Set new password'
                     : 'Reset password'}
                 </h2>
-                <p className="text-sm sm:text-base text-[var(--text-secondary)] mt-1">
-                  {mode === 'login'
-                    ? 'Save Siliguri properties, track site visit requests, and access your dashboard.'
-                    : mode === 'register'
-                    ? 'Create a free account to shortlist properties and schedule site visits.'
-                    : mode === 'recovery'
-                    ? 'Enter a new password for your Debmalya Realty account.'
-                    : authModalNotice ||
-                      'Enter your email address and we will send a password reset link.'}
-                </p>
+                {authModalNotice && isMainSwitchMode ? (
+                  <p className="mt-1.5 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-canvas)] px-3.5 py-2 text-[13px] font-medium text-[var(--accent-primary)]">
+                    {authModalNotice}
+                  </p>
+                ) : (
+                  <p className="text-sm sm:text-base text-[var(--text-secondary)] mt-1">
+                    {mode === 'login'
+                      ? 'Save Siliguri properties, track site visit requests, and access your dashboard.'
+                      : mode === 'register'
+                      ? 'Create a free account to shortlist properties and schedule site visits.'
+                      : mode === 'recovery'
+                      ? 'Enter a new password for your Debmalya Realty account.'
+                      : authModalNotice ||
+                        'Enter your email address and we will send a password reset link.'}
+                  </p>
+                )}
 
-                <form ref={formRef} onSubmit={handleSubmit} className="mt-5 space-y-4">
+                <form ref={formRef} noValidate onSubmit={handleSubmit} className="mt-5 space-y-4">
                   {mode === 'register' && (
                     <>
                       <div>
@@ -469,13 +506,14 @@ export const AuthModal: React.FC = () => {
                           htmlFor="auth-fullname"
                           className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
                         >
-                          Name *
+                          Full Name *
                         </label>
                         <input
                           id="auth-fullname"
                           type="text"
                           required
                           autoComplete="name"
+                          placeholder="Your full name"
                           value={fullName}
                           onChange={(e) => setFullName(e.target.value)}
                           className="w-full min-h-[48px] px-3.5 py-2.5 rounded-xl border border-[var(--border-input)] bg-[var(--bg-canvas)] text-base text-[var(--text-primary)] placeholder:text-[var(--text-placeholder)] focus:outline-none focus:border-[var(--accent-primary)]"
@@ -487,11 +525,12 @@ export const AuthModal: React.FC = () => {
                           htmlFor="auth-phone"
                           className="block text-[13px] font-medium text-[var(--text-primary)] mb-1.5"
                         >
-                          Phone
+                          Phone *
                         </label>
                         <input
                           id="auth-phone"
                           type="tel"
+                          required
                           inputMode="tel"
                           autoComplete="tel"
                           value={phone}
@@ -638,7 +677,7 @@ export const AuthModal: React.FC = () => {
                       {submitting
                         ? 'Please wait...'
                         : mode === 'login'
-                        ? 'Log in'
+                        ? 'Sign in'
                         : mode === 'register'
                         ? 'Create account'
                         : mode === 'recovery'

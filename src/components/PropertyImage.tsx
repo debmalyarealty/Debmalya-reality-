@@ -61,8 +61,8 @@ export const PropertyImage: React.FC<PropertyImageProps> = ({
       referrerPolicy="no-referrer"
       onLoad={() => setLoaded(true)}
       onError={() => setFailed(true)}
-      className={`${className} [-webkit-user-drag:none] transition-opacity duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-        loaded ? 'opacity-100' : 'opacity-0'
+      className={`${className} [-webkit-user-drag:none] transition-[opacity,transform] duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${
+        loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-[1.015] motion-reduce:scale-100'
       }`}
     />
   );

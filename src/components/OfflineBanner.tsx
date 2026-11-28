@@ -10,7 +10,7 @@ export const OfflineBanner: React.FC = () => {
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-20 left-1/2 -translate-x-1/2 z-[120] w-[calc(100%-2rem)] max-w-xl px-4 py-2.5 rounded-xl border shadow-lg flex items-center gap-2.5 text-xs sm:text-sm font-medium"
+      className="fixed top-[calc(env(safe-area-inset-top,0px)+4.75rem)] left-1/2 -translate-x-1/2 z-[120] w-[calc(100%-2rem)] max-w-xl px-4 py-2.5 rounded-xl border shadow-lg flex items-center gap-2.5 text-xs sm:text-sm font-medium"
       style={{
         backgroundColor: 'var(--bg-surface, #1D2A23)',
         borderColor: 'var(--border-hairline, rgba(255,255,255,0.16))',

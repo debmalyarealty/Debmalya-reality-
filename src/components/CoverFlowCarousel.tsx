@@ -35,7 +35,8 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
   const interactionTimeout = useRef<number | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
-  const count = properties.length;
+  const safeProperties = Array.isArray(properties) ? properties : [];
+  const count = safeProperties.length;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -274,7 +275,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
       <div
         ref={stageRef}
         data-testid="recommended-coverflow-stage"
-        className="relative h-[400px] sm:h-[465px] lg:h-[490px] w-full overflow-hidden select-none touch-pan-y"
+        className="relative h-[400px] sm:h-[465px] lg:h-[510px] xl:h-[540px] w-full overflow-hidden select-none touch-pan-y"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -289,7 +290,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
           className="relative w-full h-full flex items-center justify-center"
           style={{ transformStyle: 'preserve-3d' }}
         >
-          {properties.map((prop, idx) => {
+          {safeProperties.map((prop, idx) => {
             const offset = getOffset(idx);
             const absOffset = Math.abs(offset);
             const maxVisibleOffset = count >= 5 ? 2 : 1;
@@ -322,14 +323,19 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
               : -32;
             const zIndex = 30 - absOffset * 10;
             const opacity = isCenter ? 1 : absOffset === 1 ? 0.74 : 0.34;
-            const locText = prop.location.toLowerCase().includes('siliguri')
-              ? prop.location
-              : `${prop.location}, Siliguri`;
+            const safeLocation = prop.location || 'Siliguri';
+            const safeTitle = prop.title || 'Siliguri Property';
+            const safeImages = Array.isArray(prop.images) ? prop.images : [];
+            const safeBeds = Number(prop.bedrooms) || 0;
+            const safeArea = Number(prop.area_sqft) || 0;
+            const locText = safeLocation.toLowerCase().includes('siliguri')
+              ? safeLocation
+              : `${safeLocation}, Siliguri`;
             const detailSummary = [
               prop.property_type,
-              prop.bedrooms > 0 ? `${prop.bedrooms} BHK` : null,
-              prop.area_sqft > 0
-                ? `${prop.area_sqft.toLocaleString('en-IN')} sq ft`
+              safeBeds > 0 ? `${safeBeds} BHK` : null,
+              safeArea > 0
+                ? `${safeArea.toLocaleString('en-IN')} sq ft`
                 : null,
             ]
               .filter(Boolean)
@@ -356,7 +362,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
                     setActiveIndex(idx);
                   }
                 }}
-                className={`absolute w-[min(88%,400px)] sm:w-[64%] lg:w-[48%] flex flex-col rounded-[clamp(1.25rem,3vw,1.75rem)] overflow-hidden bg-[var(--bg-surface)] border border-[var(--border-hairline)] ${
+                className={`absolute w-[min(88%,400px)] sm:w-[min(64%,480px)] lg:w-[min(48%,540px)] flex flex-col rounded-[clamp(1.25rem,3vw,1.75rem)] overflow-hidden bg-[var(--bg-surface)] border border-[var(--border-hairline)] ${
                   isCenter
                     ? 'shadow-[var(--shadow-elevated)]'
                     : 'cursor-pointer shadow-[var(--shadow-subtle)]'
@@ -380,8 +386,8 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
                     }}
                     aria-label={
                       isCenter
-                        ? `${prop.title} photo — tap to ${isRevealed ? 'hide' : 'show'} Details button`
-                        : `Select ${prop.title}`
+                        ? `${safeTitle} photo — tap to ${isRevealed ? 'hide' : 'show'} Details button`
+                        : `Select ${safeTitle}`
                     }
                     aria-expanded={isCenter ? isRevealed : undefined}
                     className={`tap-press relative block w-full aspect-[16/10] overflow-hidden bg-[var(--bg-surface-muted)] [&_img]:pointer-events-none focus-visible:outline-none ${
@@ -389,8 +395,8 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
                     }`}
                   >
                     <PropertyImage
-                      src={prop.images[0]?.url}
-                      alt={buildPropertyImageAlt(prop.title, prop.location)}
+                      src={safeImages[0]?.url}
+                      alt={buildPropertyImageAlt(safeTitle, safeLocation)}
                       className="w-full h-full object-cover object-center"
                       sizes="(max-width: 640px) 88vw, (max-width: 1024px) 64vw, 48vw"
                     />
@@ -410,12 +416,12 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
                         )}
                       </span>
                       <span className="text-[13px] font-medium text-[var(--text-muted)] whitespace-nowrap">
-                        {prop.listing_type}
+                        {prop.listing_type || 'Buy'}
                       </span>
                     </div>
 
                     <h3 className="font-display text-[clamp(1.1rem,2.2vw,1.375rem)] font-medium text-[var(--text-primary)] leading-snug truncate">
-                      {prop.title}
+                      {safeTitle}
                     </h3>
 
                     <p className="inline-flex items-center gap-1.5 text-sm text-[var(--text-secondary)] min-w-0">
@@ -472,7 +478,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
       {/* Minimal Indicator Dots */}
       {count > 1 && (
         <div className="flex items-center justify-center gap-0.5">
-          {properties.map((p, idx) => (
+          {safeProperties.map((p, idx) => (
             <button
               key={p.id}
               type="button"
@@ -481,7 +487,7 @@ export const CoverFlowCarousel: React.FC<CoverFlowCarouselProps> = ({
                 pauseBriefly();
                 setActiveIndex(idx);
               }}
-              aria-label={`View recommended property ${idx + 1}: ${p.title}`}
+              aria-label={`View recommended property ${idx + 1}: ${p.title || 'Property'}`}
               className="tap-press min-h-[44px] min-w-[44px] inline-flex items-center justify-center cursor-pointer"
             >
               <span

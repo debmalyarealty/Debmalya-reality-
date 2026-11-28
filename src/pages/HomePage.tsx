@@ -68,6 +68,11 @@ import { ReviewsCarousel } from '../components/ReviewsCarousel';
 import { PropertyImage } from '../components/PropertyImage';
 import { SmartSearchBlock } from '../components/SmartSearchBlock';
 import type { RecommendedProperty } from '../lib/realtyLogic';
+import {
+  toUserFriendlyNetworkError,
+  useDebouncedValue,
+} from '../lib/networkUtils';
+import { FALLBACK_IMAGE } from '../lib/imageUtils';
 
 const SERVICE_TILE_VISUALS: Record<
   string,
@@ -163,6 +168,9 @@ export const HomePage: React.FC = () => {
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 768 : true
   );
+  const [isUltraWide, setIsUltraWide] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 1440 : false
+  );
 
   const [isLandscapeCompact, setIsLandscapeCompact] = useState<boolean>(() =>
     typeof window !== 'undefined'
@@ -173,20 +181,24 @@ export const HomePage: React.FC = () => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const mqDesktop = window.matchMedia('(min-width: 768px)');
+    const mqUltraWide = window.matchMedia('(min-width: 1440px)');
     const mqLandscape = window.matchMedia(
       '(orientation: landscape) and (max-height: 540px)'
     );
     const syncViewportFlags = () => {
       setIsDesktop(mqDesktop.matches);
+      setIsUltraWide(mqUltraWide.matches);
       setIsLandscapeCompact(mqLandscape.matches);
     };
     syncViewportFlags();
     mqDesktop.addEventListener('change', syncViewportFlags);
+    mqUltraWide.addEventListener('change', syncViewportFlags);
     mqLandscape.addEventListener('change', syncViewportFlags);
     window.addEventListener('resize', syncViewportFlags);
     window.addEventListener('orientationchange', syncViewportFlags);
     return () => {
       mqDesktop.removeEventListener('change', syncViewportFlags);
+      mqUltraWide.removeEventListener('change', syncViewportFlags);
       mqLandscape.removeEventListener('change', syncViewportFlags);
       window.removeEventListener('resize', syncViewportFlags);
       window.removeEventListener('orientationchange', syncViewportFlags);
@@ -199,12 +211,6 @@ export const HomePage: React.FC = () => {
   const statementRef = useRef<HTMLElement>(null);
   const aboutImgRef = useRef<HTMLDivElement>(null);
   const resultsSectionRef = useRef<HTMLElement>(null);
-
-  const { scrollYProgress: heroScroll } = useScroll({
-    target: heroRef,
-    offset: ['start start', 'end start'],
-  });
-  const heroParallaxY = useTransform(heroScroll, [0, 1], ['0%', '14%']);
 
   const { scrollYProgress: statementScroll } = useScroll({
     target: statementRef,
@@ -349,29 +355,44 @@ export const HomePage: React.FC = () => {
     };
   }, [user]);
 
+  const debouncedQuery = useDebouncedValue(searchState.query, 250);
+  const debouncedSearchState = useMemo(
+    () => ({ ...searchState, query: debouncedQuery }),
+    [searchState, debouncedQuery]
+  );
+
+  const safeProperties = useMemo(
+    () => (Array.isArray(properties) ? properties : []),
+    [properties]
+  );
+  const safeAgents = useMemo(
+    () => (Array.isArray(agents) ? agents : []),
+    [agents]
+  );
+
   const activeProperties = useMemo(
     () =>
       filterAndSortProperties(
-        properties,
+        safeProperties,
         { status: 'ActiveOnly' },
         { publicOnly: true, allowClosedInAll: false }
       ),
-    [properties]
+    [safeProperties]
   );
 
   const hasActiveSearchFilters = useMemo(
-    () => countActiveFilters(searchState) > 0,
-    [searchState]
+    () => countActiveFilters(debouncedSearchState) > 0,
+    [debouncedSearchState]
   );
 
   const filteredAvailableProperties = useMemo(
     () =>
       filterAndSortProperties(
-        properties,
-        buildSmartPropertyFilters(searchState),
+        safeProperties,
+        buildSmartPropertyFilters(debouncedSearchState),
         { publicOnly: true, allowClosedInAll: false }
       ),
-    [properties, searchState]
+    [safeProperties, debouncedSearchState]
   );
 
   const displayedProperties = useMemo(() => {
@@ -391,8 +412,9 @@ export const HomePage: React.FC = () => {
 
   const recommendedCarouselData = useMemo(() => {
     const reasonsById: Record<string, string[]> = {};
-    const activeRecs = recommendations.filter((r) =>
-      isPropertyActiveOpportunity(r.property.status)
+    const safeRecs = Array.isArray(recommendations) ? recommendations : [];
+    const activeRecs = safeRecs.filter(
+      (r) => r?.property && isPropertyActiveOpportunity(r.property.status)
     );
 
     if (user && activeRecs.length > 0) {
@@ -417,6 +439,7 @@ export const HomePage: React.FC = () => {
 
   const buildPropertiesHref = (state: SmartSearchState): string => {
     const params = new URLSearchParams();
+    if (state.query?.trim()) params.set('q', state.query.trim());
     if (state.listing !== 'All') params.set('type', state.listing);
     if (state.location !== 'All') params.set('location', state.location);
     if (state.propertyType !== 'All') params.set('category', state.propertyType);
@@ -513,10 +536,10 @@ export const HomePage: React.FC = () => {
       window.setTimeout(() => setCSubmittedOk(false), 2600);
       setCMessage('');
     } catch (error) {
-      setCError(
-        error instanceof Error ? error.message : 'Unable to send inquiry.'
-      );
+      const msg = toUserFriendlyNetworkError(error, 'Unable to send inquiry.').message;
+      setCError(msg);
       setCErrorKey((k) => k + 1);
+      showToast(msg, 'error');
     } finally {
       setCSubmitting(false);
     }
@@ -562,145 +585,87 @@ export const HomePage: React.FC = () => {
 
   return (
     <main>
-      {/* 1. ARCHITECTURAL HERO (Portrait Phones: clean 4:5 photo above text fading into canvas; Landscape Phones: 4:5 side-by-side; Tablet/Desktop: full architectural bleed with >=90% opaque dark gradient backdrop) */}
-      {isLandscapeCompact ? (
-        <section
-          id="hero"
-          ref={heroRef}
-          className="relative min-h-[min(80svh,440px)] flex items-center bg-[var(--bg-canvas)] pt-[calc(env(safe-area-inset-top,0px)+4.5rem)] pb-6 overflow-x-clip scroll-mt-24"
+      {/* 1. ARCHITECTURAL HERO — Full-width banner on top, smooth fade into page canvas, text & CTAs below */}
+      <section
+        id="hero"
+        ref={heroRef}
+        className={`relative flex flex-col bg-[var(--bg-canvas)] overflow-x-clip scroll-mt-24 ${
+          isLandscapeCompact
+            ? 'min-h-[min(86svh,440px)] pt-[calc(env(safe-area-inset-top,0px)+4rem)] pb-6'
+            : 'min-h-[min(74svh,640px)] lg:min-h-0 pt-[env(safe-area-inset-top,0px)] md:pt-[calc(env(safe-area-inset-top,0px)+4.25rem)] pb-[clamp(1.75rem,5vw,2.75rem)] lg:pb-10'
+        }`}
+      >
+        {/* Clean full-width photo block fading softly into page canvas at bottom; heading and paragraph sit below */}
+        <div
+          data-testid="mobile-hero-photo-block"
+          className={`relative w-full overflow-hidden bg-[#16201B] ${
+            isLandscapeCompact
+              ? 'h-[min(54svh,240px)]'
+              : 'aspect-[4/5] md:aspect-auto md:h-[clamp(360px,56vh,520px)] lg:h-[clamp(440px,65vh,660px)]'
+          }`}
         >
-          <div className="fluid-container w-full grid grid-cols-12 gap-5 items-center">
-            <div className="col-span-5 min-w-0 flex justify-center">
-              <div className="relative aspect-[4/5] w-full max-w-[min(100%,calc(70dvh*0.8))] rounded-2xl overflow-hidden bg-[#16201B] shadow-[var(--shadow-subtle)]">
-                {localHeroSources ? (
-                  <picture className="block w-full h-full">
-                    <source
-                      type="image/webp"
-                      srcSet={localHeroSources.webpSrcSet}
-                      sizes="42vw"
-                    />
-                    <source
-                      type="image/jpeg"
-                      srcSet={localHeroSources.jpegSrcSet}
-                      sizes="42vw"
-                    />
-                    <img
-                      src={localHeroSources.jpegSrc}
-                      srcSet={localHeroSources.jpegSrcSet}
-                      sizes="42vw"
-                      alt="Contemporary architectural residence in Siliguri"
-                      loading="eager"
-                      decoding="async"
-                      fetchPriority="high"
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover object-[50%_50%]"
-                    />
-                  </picture>
-                ) : (
-                  <img
-                    src={heroSrc}
-                    alt="Contemporary architectural residence in Siliguri"
-                    loading="eager"
-                    decoding="async"
-                    fetchPriority="high"
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover object-[50%_50%]"
-                  />
-                )}
-              </div>
-            </div>
-
-            <div className="col-span-7 min-w-0 space-y-3">
-              <p className="text-[13px] font-medium text-[var(--accent-primary)]">
-                Siliguri, West Bengal &middot; Buy, sell, rent &amp; build
-              </p>
-
-              <h1 className="font-display text-[clamp(1.65rem,4vw,2.5rem)] font-medium text-[var(--text-primary)] leading-[1.08] tracking-[-0.02em]">
-                {heroHeadlineLines.join(' ')}
-              </h1>
-
-              <p className="text-base font-normal text-[var(--text-secondary)] leading-relaxed fluid-prose">
-                {settings?.hero_subheadline ||
-                  'Discover exceptional properties in Siliguri. Whether you want to buy, sell, rent, or build, Debmalya Realty is here to help.'}
-              </p>
-
-              <div className="flex flex-wrap items-center gap-3 pt-1">
-                <Link
-                  to="/properties"
-                  className="btn-primary-lux tap-press min-h-[46px] px-5 py-2.5 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 dark:border-[#EED6A4]/50 text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shadow-[var(--shadow-subtle)]"
-                >
-                  <span>Explore properties</span>
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-                <a
-                  href="#contact"
-                  className="lux-card-hover tap-press min-h-[46px] px-5 py-2.5 rounded-full bg-[var(--btn-secondary-bg)] hover:bg-[var(--btn-secondary-hover)] border border-[var(--btn-secondary-border)] text-[var(--btn-secondary-text)] text-sm font-medium inline-flex items-center gap-2 whitespace-nowrap"
-                >
-                  <span>Schedule consultation</span>
-                </a>
-              </div>
-            </div>
-          </div>
-        </section>
-      ) : !isDesktop ? (
-        <section
-          id="hero"
-          ref={heroRef}
-          className="relative min-h-[min(74svh,640px)] flex flex-col bg-[var(--bg-canvas)] pt-[env(safe-area-inset-top,0px)] pb-[clamp(1.75rem,5vw,2.75rem)] overflow-x-clip scroll-mt-24"
-        >
-          {/* Clean 4:5 photo block fading softly into page canvas at bottom; heading and paragraph sit below */}
-          <div
-            data-testid="mobile-hero-photo-block"
-            className="relative w-full aspect-[4/5] overflow-hidden bg-[#16201B]"
-          >
-            {localHeroSources ? (
-              <picture className="block w-full h-full">
-                <source
-                  type="image/webp"
-                  srcSet={localHeroSources.webpSrcSet}
-                  sizes="100vw"
-                />
-                <source
-                  type="image/jpeg"
-                  srcSet={localHeroSources.jpegSrcSet}
-                  sizes="100vw"
-                />
-                <img
-                  src={localHeroSources.jpegSrc}
-                  srcSet={localHeroSources.jpegSrcSet}
-                  sizes="100vw"
-                  alt="Contemporary architectural residence in Siliguri"
-                  loading="eager"
-                  decoding="async"
-                  fetchPriority="high"
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover object-[50%_52%]"
-                />
-              </picture>
-            ) : (
+          {localHeroSources ? (
+            <picture className="block w-full h-full">
+              <source
+                type="image/webp"
+                srcSet={localHeroSources.webpSrcSet}
+                sizes="100vw"
+              />
+              <source
+                type="image/jpeg"
+                srcSet={localHeroSources.jpegSrcSet}
+                sizes="100vw"
+              />
               <img
-                src={heroSrc}
-                alt="Contemporary architectural residence in Siliguri"
+                src={localHeroSources.jpegSrc}
+                srcSet={localHeroSources.jpegSrcSet}
+                sizes="100vw"
+                alt="Debmalya Realty storefront in Siliguri"
                 loading="eager"
                 decoding="async"
                 fetchPriority="high"
                 referrerPolicy="no-referrer"
-                className="w-full h-full object-cover object-[50%_52%]"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (img.dataset.fallbackApplied) return;
+                  img.dataset.fallbackApplied = '1';
+                  img.removeAttribute('srcset');
+                  img.src = FALLBACK_IMAGE;
+                }}
+                className="w-full h-full object-cover object-[50%_52%] lg:object-center"
               />
-            )}
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[#0E1512]/50 via-[#0E1512]/15 to-transparent" />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[var(--bg-canvas)] via-[var(--bg-canvas)]/70 to-transparent" />
-          </div>
+            </picture>
+          ) : (
+            <img
+              src={heroSrc}
+              alt="Debmalya Realty storefront in Siliguri"
+              loading="eager"
+              decoding="async"
+              fetchPriority="high"
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                const img = e.currentTarget;
+                if (img.dataset.fallbackApplied) return;
+                img.dataset.fallbackApplied = '1';
+                img.src = FALLBACK_IMAGE;
+              }}
+              className="w-full h-full object-cover object-[50%_52%] lg:object-center"
+            />
+          )}
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[#0E1512]/50 via-[#0E1512]/15 to-transparent md:hidden" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 sm:h-24 lg:h-28 bg-gradient-to-t from-[var(--bg-canvas)] via-[var(--bg-canvas)]/70 to-transparent" />
+        </div>
 
-          <div
-            data-testid="mobile-hero-text-block"
-            className="fluid-container relative z-10 w-full pt-3 space-y-3.5"
-          >
+        <div
+          data-testid="mobile-hero-text-block"
+          className="fluid-container relative z-10 w-full pt-3 lg:pt-6 lg:text-center"
+        >
+          <div className="lg:max-w-3xl lg:mx-auto space-y-3.5 lg:space-y-4">
             <p className="text-sm font-medium text-[var(--accent-primary)]">
               Siliguri, West Bengal &middot; Buy, sell, rent &amp; build
             </p>
 
-            <h1 className="font-display text-[clamp(2rem,8.5vw,2.75rem)] font-medium text-[var(--text-primary)] leading-[1.06] tracking-[-0.02em]">
+            <h1 className="font-display text-[clamp(2rem,8.5vw,2.75rem)] lg:text-[clamp(2.65rem,4.2vw,4rem)] font-medium text-[var(--text-primary)] leading-[1.06] tracking-[-0.02em]">
               {heroHeadlineLines.map((line) => (
                 <span key={line} className="block">
                   {line}
@@ -708,12 +673,12 @@ export const HomePage: React.FC = () => {
               ))}
             </h1>
 
-            <p className="text-base font-normal text-[var(--text-secondary)] leading-relaxed fluid-prose">
+            <p className="text-base lg:text-lg font-normal text-[var(--text-secondary)] leading-relaxed fluid-prose lg:mx-auto">
               {settings?.hero_subheadline ||
                 'Discover exceptional properties in Siliguri. Whether you want to buy, sell, rent, or build, Debmalya Realty is here to help.'}
             </p>
 
-            <div className="flex flex-wrap items-center gap-3 pt-1">
+            <div className="flex flex-wrap items-center lg:justify-center gap-3 pt-1 lg:pt-2">
               <Link
                 to="/properties"
                 className="btn-primary-lux tap-press min-h-[48px] px-6 py-3 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-black/15 dark:border-[#EED6A4]/50 text-sm font-semibold inline-flex items-center gap-2 whitespace-nowrap shadow-[var(--shadow-subtle)]"
@@ -729,128 +694,8 @@ export const HomePage: React.FC = () => {
               </a>
             </div>
           </div>
-        </section>
-      ) : (
-        <section
-          id="hero"
-          ref={heroRef}
-          className="relative min-h-[clamp(500px,74svh,690px)] flex flex-col justify-end pt-[calc(env(safe-area-inset-top,0px)+5.5rem)] pb-[clamp(2.5rem,5vw,4rem)] overflow-hidden scroll-mt-24 bg-[#0E1512]"
-        >
-          <motion.div
-            style={enableParallax ? { y: heroParallaxY } : undefined}
-            className="absolute inset-0"
-          >
-            <motion.div
-              initial={prefersReduced ? false : { scale: 1.07 }}
-              animate={{ scale: 1 }}
-              transition={{ duration: 2.2, ease: [0.16, 1, 0.3, 1] }}
-              className="w-full h-full"
-            >
-              {localHeroSources ? (
-                <picture className="block w-full h-full">
-                  <source
-                    type="image/webp"
-                    srcSet={localHeroSources.webpSrcSet}
-                    sizes="100vw"
-                  />
-                  <source
-                    type="image/jpeg"
-                    srcSet={localHeroSources.jpegSrcSet}
-                    sizes="100vw"
-                  />
-                  <img
-                    src={localHeroSources.jpegSrc}
-                    srcSet={localHeroSources.jpegSrcSet}
-                    sizes="100vw"
-                    alt="Contemporary architectural residence in Siliguri"
-                    loading="eager"
-                    decoding="async"
-                    fetchPriority="high"
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover object-[55%_46%]"
-                  />
-                </picture>
-              ) : (
-                <img
-                  src={heroSrc}
-                  alt="Contemporary architectural residence in Siliguri"
-                  loading="eager"
-                  decoding="async"
-                  fetchPriority="high"
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover object-[55%_46%]"
-                />
-              )}
-            </motion.div>
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[#0E1512]/55 via-[#0E1512]/20 to-transparent" />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[76%] bg-gradient-to-r from-[#0E1512]/90 via-[#0E1512]/50 to-transparent" />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[72%] bg-gradient-to-t from-[#0E1512]/95 via-[#0E1512]/80 to-transparent" />
-          </motion.div>
-
-          <div className="fluid-container relative z-10 w-full">
-            <div className="max-w-4xl space-y-[clamp(0.875rem,2.2vw,1.35rem)]">
-              <motion.p
-                initial={prefersReduced ? false : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.55, delay: 0.05, ease: LUX_EASE }}
-                className="text-sm sm:text-base font-medium text-[#F5DFB0] [text-shadow:0_2px_12px_rgba(0,0,0,0.85)]"
-              >
-                Siliguri, West Bengal &middot; Buy, sell, rent &amp; build
-              </motion.p>
-
-              <h1 className="font-display text-[clamp(2.5rem,5.4vw,5.25rem)] font-medium text-white leading-[1.03] tracking-[-0.02em] [text-shadow:0_4px_24px_rgba(0,0,0,0.8)]">
-                {heroHeadlineLines.map((line, i) => (
-                  <span key={line} className="block overflow-hidden pb-1">
-                    <motion.span
-                      className="block"
-                      initial={prefersReduced ? false : { y: '105%', opacity: 0 }}
-                      animate={{ y: '0%', opacity: 1 }}
-                      transition={{
-                        duration: 0.85,
-                        delay: 0.1 + i * 0.14,
-                        ease: LUX_EASE,
-                      }}
-                    >
-                      {line}
-                    </motion.span>
-                  </span>
-                ))}
-              </h1>
-
-              <motion.p
-                initial={prefersReduced ? false : { opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.65, delay: 0.34, ease: LUX_EASE }}
-                className="text-base sm:text-lg font-medium text-white/95 leading-relaxed fluid-prose [text-shadow:0_2px_12px_rgba(0,0,0,0.85)]"
-              >
-                {settings?.hero_subheadline ||
-                  'Discover exceptional properties in Siliguri. Whether you want to buy, sell, rent, or build, Debmalya Realty is here to help.'}
-              </motion.p>
-
-              <motion.div
-                initial={prefersReduced ? false : { opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.65, delay: 0.46, ease: LUX_EASE }}
-                className="flex flex-wrap items-center gap-3.5 pt-2"
-              >
-                <Link
-                  to="/properties"
-                  className="btn-primary-lux tap-press min-h-[48px] px-7 py-3 rounded-full bg-[var(--cta-gold-bg)] hover:bg-[var(--cta-gold-hover)] text-[var(--cta-gold-ink)] border border-[#F5DFB0]/70 text-sm font-semibold inline-flex items-center gap-2.5 whitespace-nowrap shadow-[0_10px_28px_rgba(0,0,0,0.45)]"
-                >
-                  <span>Explore properties</span>
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-                <a
-                  href="#contact"
-                  className="lux-card-hover tap-press min-h-[48px] px-7 py-3 rounded-full bg-[#0E1512]/72 hover:bg-[#0E1512]/88 border border-white/80 backdrop-blur-md text-white text-sm font-medium inline-flex items-center gap-2 whitespace-nowrap shadow-[0_8px_24px_rgba(0,0,0,0.4)]"
-                >
-                  <span>Schedule consultation</span>
-                </a>
-              </motion.div>
-            </div>
-          </div>
-        </section>
-      )}
+        </div>
+      </section>
 
       {/* 2. MODERN SMART SEARCH */}
       <SmartSearchBlock
@@ -901,7 +746,11 @@ export const HomePage: React.FC = () => {
               ) : (
                 <button
                   type="button"
-                  onClick={() => openAuthModal('register')}
+                  onClick={() =>
+                    openAuthModal('login', {
+                      notice: 'Sign in to personalize your recommendations',
+                    })
+                  }
                   className="tap-press min-h-[44px] inline-flex items-center text-sm font-medium text-[var(--accent-primary)] hover:underline cursor-pointer whitespace-nowrap"
                 >
                   Personalize feed &rarr;
@@ -961,7 +810,7 @@ export const HomePage: React.FC = () => {
         initial={prefersReduced ? false : { opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.08 }}
-        transition={{ duration: 0.55, ease: LUX_EASE }}
+        transition={{ duration: 0.45, ease: LUX_EASE }}
         className="scroll-mt-28 fluid-section bg-[var(--bg-canvas)]"
       >
           <div className="fluid-container space-y-[clamp(1.75rem,3.5vw,2.5rem)]">
@@ -1069,7 +918,7 @@ export const HomePage: React.FC = () => {
               </div>
             ) : (
               <div className="fluid-grid-cards">
-                {displayedProperties.slice(0, hasActiveSearchFilters ? 12 : 6).map((prop, idx) => (
+                {displayedProperties.slice(0, hasActiveSearchFilters ? 12 : isUltraWide ? 8 : 6).map((prop, idx) => (
                   <motion.div
                     key={prop.id}
                     initial={prefersReduced ? false : { opacity: 0, y: 14 }}
@@ -1096,7 +945,7 @@ export const HomePage: React.FC = () => {
         initial={prefersReduced ? false : { opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.08 }}
-        transition={{ duration: 0.55, ease: LUX_EASE }}
+        transition={{ duration: 0.45, ease: LUX_EASE }}
         className="scroll-mt-28 fluid-section bg-[var(--bg-surface-alt)]"
       >
         <div className="fluid-container space-y-[clamp(1.5rem,3.5vw,2.25rem)]">
@@ -1218,10 +1067,10 @@ export const HomePage: React.FC = () => {
         initial={prefersReduced ? false : { opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.08 }}
-        transition={{ duration: 0.55, ease: LUX_EASE }}
+        transition={{ duration: 0.45, ease: LUX_EASE }}
         className="scroll-mt-28 fluid-section bg-[var(--bg-canvas)] overflow-hidden"
       >
-        <div className="max-w-[1440px] mx-auto grid grid-cols-1 lg:grid-cols-12 items-center">
+        <div className="max-w-[clamp(1140px,88vw,1520px)] mx-auto grid grid-cols-1 lg:grid-cols-12 items-center">
           <div
             ref={aboutImgRef}
             className="lg:col-span-7 min-w-0 relative h-[clamp(300px,52vw,620px)] overflow-hidden lg:rounded-r-[36px] bg-[var(--bg-surface-muted)]"
@@ -1274,17 +1123,17 @@ export const HomePage: React.FC = () => {
         initial={prefersReduced ? false : { opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.08 }}
-        transition={{ duration: 0.55, ease: LUX_EASE }}
+        transition={{ duration: 0.45, ease: LUX_EASE }}
         className="scroll-mt-28 fluid-section bg-[var(--bg-secondary)]"
       >
         <div className="fluid-container space-y-[clamp(1.75rem,3.5vw,2.5rem)]">
-          {agents.length > 0 ? (
+          {safeAgents.length > 0 ? (
             <>
               <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.125rem)] font-medium text-[var(--text-primary)] leading-[1.15]">
                 Our team
               </h2>
               <div className="fluid-grid-team">
-                {agents.map((agent) => (
+                {safeAgents.map((agent) => (
                   <article
                     key={agent.id}
                     className="group lux-card-hover min-w-0 flex flex-col space-y-5 rounded-[clamp(1.25rem,3vw,1.75rem)] bg-[var(--bg-surface)] p-4 sm:p-5 border border-[var(--border-hairline)] shadow-[var(--shadow-subtle)]"
@@ -1379,7 +1228,7 @@ export const HomePage: React.FC = () => {
         initial={prefersReduced ? false : { opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.08 }}
-        transition={{ duration: 0.55, ease: LUX_EASE }}
+        transition={{ duration: 0.45, ease: LUX_EASE }}
         className="scroll-mt-28 fluid-section bg-[var(--bg-canvas)]"
       >
         <div className="fluid-container">
@@ -1393,7 +1242,7 @@ export const HomePage: React.FC = () => {
         initial={prefersReduced ? false : { opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.08 }}
-        transition={{ duration: 0.55, ease: LUX_EASE }}
+        transition={{ duration: 0.45, ease: LUX_EASE }}
         className="scroll-mt-28 fluid-section bg-[var(--bg-surface-alt)]"
       >
         <div className="fluid-container space-y-[clamp(1.5rem,3.5vw,2.25rem)]">
@@ -1453,6 +1302,17 @@ export const HomePage: React.FC = () => {
                   <p className="text-base text-[var(--text-primary)] leading-relaxed break-anywhere">
                     {address}
                   </p>
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                      `Debmalya Realty, ${address}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-h-[44px] inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent-primary)] hover:underline"
+                  >
+                    <span>View on Google Maps</span>
+                    <ArrowUpRight className="w-4 h-4 shrink-0" />
+                  </a>
                 </div>
 
                 <div className="py-4 space-y-1">

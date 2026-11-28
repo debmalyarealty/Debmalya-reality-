@@ -141,7 +141,7 @@ html body :focus-visible {
 /* ─── FLUID LAYOUT CONTAINERS, GRIDS & CONTAINER QUERIES ────────────────────── */
 .fluid-container {
   width: 100%;
-  max-width: 1200px;
+  max-width: clamp(1140px, 86vw, 1520px);
   margin-inline: auto;
   padding-left: max(clamp(1rem, 3.8vw, 2rem), env(safe-area-inset-left, 0px));
   padding-right: max(clamp(1rem, 3.8vw, 2rem), env(safe-area-inset-right, 0px));
@@ -162,7 +162,7 @@ html body :focus-visible {
 
 .fluid-grid-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 285px), 1fr));
   gap: clamp(1rem, 2.5vw, 1.875rem);
 }
 
